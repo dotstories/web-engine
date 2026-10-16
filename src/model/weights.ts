@@ -27,7 +27,7 @@ export async function loadLinear(graph: Graph, file: Blob, st: Safetensors, name
 }
 
 /** Any float tensor as f32 on the CPU (norm weights, modulation tables are small). */
-export async function loadFloats(file: Blob, st: Safetensors, name: string): Promise<Float32Array> {
+export async function loadFloats(file: Blob, st: Safetensors, name: string): Promise<Float32Array<ArrayBuffer>> {
   const t = tensor(st, name);
   return toFloat32(t.dtype, await readTensor(file, t));
 }

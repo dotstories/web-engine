@@ -12,13 +12,14 @@ export class Graph {
   constructor(readonly device: GPUDevice) {}
 
   /** A storage buffer with this data, or zeroed with this many bytes. */
-  buffer(data: ArrayBufferView<ArrayBuffer> | number): GPUBuffer {
+  buffer(data: ArrayBufferView | number): GPUBuffer {
     const size = typeof data === "number" ? data : data.byteLength;
     const buffer = this.device.createBuffer({
       size: Math.max(4, Math.ceil(size / 4) * 4),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
-    if (typeof data !== "number") this.device.queue.writeBuffer(buffer, 0, data);
+    // Typed arrays here never sit on a SharedArrayBuffer (no cross-origin isolation), so the cast is safe.
+    if (typeof data !== "number") this.device.queue.writeBuffer(buffer, 0, data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
     this.owned.push(buffer);
     return buffer;
   }

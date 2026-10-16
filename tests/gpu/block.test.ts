@@ -115,15 +115,15 @@ it("runs a whole block on the GPU like the float64 reference", async () => {
 
   const graph = new Graph(await getDevice());
   try {
-    const lin = (c: CpuLinear): Linear => ({ buffer: graph.buffer(new Uint32Array(c.bytes.buffer)), scale: c.scale, n: c.n, k: c.k });
+    const lin = (c: CpuLinear): Linear => ({ buffer: graph.buffer(new Uint32Array(c.bytes.buffer)), dtype: "fp8", scale: c.scale, n: c.n, k: c.k });
     const weights: BlockWeights = {
       wq: lin(cpuW.wq), wk: lin(cpuW.wk), wv: lin(cpuW.wv), gate: lin(cpuW.gate), wo: lin(cpuW.wo),
       mlpGate: lin(cpuW.mlpGate), mlpUp: lin(cpuW.mlpUp), mlpDown: lin(cpuW.mlpDown),
       norm1: graph.buffer(vecs.norm1), norm2: graph.buffer(vecs.norm2), normQ: graph.buffer(vecs.normQ), normK: graph.buffer(vecs.normK),
-      table: vecs.table,
+      table: graph.buffer(vecs.table),
     };
     const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
-    const out = block(graph, weights, cfg, graph.buffer(x), temb, rope);
+    const out = block(graph, weights, cfg, graph.buffer(x), graph.buffer(temb), rope);
     const gpu = new Float32Array(await graph.read(out, tokens * hidden * 4));
 
     const cpu = reference(Float64Array.from(x), cpuW, vecs, temb, tokens, tables.cos, tables.sin);

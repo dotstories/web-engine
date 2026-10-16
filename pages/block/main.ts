@@ -42,7 +42,7 @@ $("#run").addEventListener("click", async () => {
     start = performance.now();
     const tables = ropeTables(pos);
     const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
-    const out = block(graph, weights, KREA_BLOCK, graph.buffer(x), temb, rope);
+    const out = block(graph, weights, KREA_BLOCK, graph.buffer(x), graph.buffer(temb), rope);
     const result = new Float32Array(await graph.read(out, tokens * KREA_BLOCK.hidden * 4));
     const runTime = seconds(start);
 

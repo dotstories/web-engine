@@ -16,6 +16,7 @@ export default defineConfig({
         model: resolve(import.meta.dirname, "pages/model/index.html"),
         bench: resolve(import.meta.dirname, "pages/bench/index.html"),
         block: resolve(import.meta.dirname, "pages/block/index.html"),
+        transformer: resolve(import.meta.dirname, "pages/transformer/index.html"),
       },
     },
   },

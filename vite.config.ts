@@ -20,6 +20,7 @@ export default defineConfig({
         run: resolve(import.meta.dirname, "pages/run/index.html"),
         vae: resolve(import.meta.dirname, "pages/vae/index.html"),
         text: resolve(import.meta.dirname, "pages/text/index.html"),
+        generate: resolve(import.meta.dirname, "pages/generate/index.html"),
       },
     },
   },

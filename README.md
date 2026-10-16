@@ -20,7 +20,9 @@ Part of [DotStories](https://dotstories.com), an open-source community for shari
 
 ## Try it
 
-**[Can this computer run Krea 2?](https://dotstories.github.io/web-engine/pages/probe/)** Open the probe in Chrome or Edge and click Run.
+**[Make an image with Krea 2 in your browser](https://dotstories.github.io/web-engine/pages/generate/)**: pick your ComfyUI models folder, write a prompt, click Generate.
+
+[Can this computer run Krea 2?](https://dotstories.github.io/web-engine/pages/probe/) Open the probe in Chrome or Edge and click Run.
 
 ## Run it locally
 

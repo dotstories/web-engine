@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Generate · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; margin: 0.6rem 0; }
+      textarea { width: 100%; font: inherit; }
+      fieldset { border: 1px solid #ccc; padding: 0.5rem 1rem; margin: 1rem 0; }
+      button, select, input { font: inherit; padding: 0.3rem 0.6rem; }
+      progress { width: 100%; }
+      canvas { max-width: 100%; height: auto; border: 1px solid #ccc; display: block; margin: 1rem 0; }
+      .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: end; }
+      small { color: #555; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Krea 2 in your browser</h1>
+      <p>Makes an image from a prompt on your own GPU with Krea 2 Turbo. Nothing is uploaded. Needs Chrome or Edge on
+        a desktop and about 16 GB of GPU memory.</p>
+
+      <fieldset>
+        <legend>1. Model files</legend>
+        <button id="pick" type="button">Choose your ComfyUI models folder</button>
+        <p id="files" role="status"><small>It needs diffusion_models/krea2_turbo_fp8_scaled.safetensors,
+          text_encoders/qwen3vl_4b_fp8_scaled.safetensors and vae/qwen_image_vae.safetensors.</small></p>
+        <label><input id="license" type="checkbox" /> I have read and accept the
+          <a href="https://huggingface.co/Comfy-Org/Krea-2" target="_blank" rel="noopener">Krea 2 Community License</a>
+          and will use the model and its images only as it allows.</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>2. Image</legend>
+        <label>Prompt <textarea id="prompt" rows="3">a dark fantasy castle on a cliff at night, lightning, ravens</textarea></label>
+        <div class="row">
+          <label>Size
+            <select id="size">
+              <option value="512">512 × 512 (fast)</option>
+              <option value="768">768 × 768</option>
+              <option value="1024" selected>1024 × 1024</option>
+            </select>
+          </label>
+          <label>Seed <input id="seed" type="number" value="42" min="0" step="1" /></label>
+          <button id="generate" type="button">Generate</button>
+        </div>
+      </fieldset>
+
+      <p id="status" role="status"></p>
+      <progress id="progress" max="1" value="0" hidden></progress>
+      <canvas id="image" hidden></canvas>
+      <p><a id="download" hidden download="krea2.png">Download PNG</a> <small id="times"></small></p>
+      <p><small id="build"></small></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

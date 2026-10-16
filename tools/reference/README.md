@@ -6,6 +6,7 @@ so the browser engine can be checked against them.
 | Script | What it saves |
 |---|---|
 | `block.py` | Input, timestep modulation, positions and output of one Krea 2 transformer block (diffusers) |
+| `vae.py` | The image decoder (Wan 2.1 / Qwen-Image VAE, ComfyUI's code): latent, image and every decoder stage |
 | `transformer.py` | Krea 2 with only its first N blocks (ComfyUI's code): inputs, output and every step in between |
 
 Run with [uv](https://docs.astral.sh/uv/) (no setup needed):

@@ -47,3 +47,4 @@ Security issues: please report them privately, see [SECURITY.md](https://github.
 ## License
 
 Code: [Apache-2.0](LICENSE), see [NOTICE](NOTICE). Models keep their own licenses: you must accept a model's license before you use it.
+The Qwen2 tokenizer files in [`public/tokenizers/qwen2`](public/tokenizers/qwen2) are by the Qwen team, under the Apache License 2.0.

@@ -56,3 +56,24 @@ describe("attention", () => {
     graph.destroy();
   });
 });
+
+describe("attention in query chunks", () => {
+  it("gives the same result as all queries at once", async () => {
+    const shape = { tokens: 50, heads: 2, kvHeads: 1, dim: 16 };
+    const { tokens, heads, kvHeads, dim } = shape;
+    const [q, k, v] = [random(tokens * heads * dim), random(tokens * kvHeads * dim), random(tokens * kvHeads * dim)];
+    const graph = new Graph(await getDevice());
+    try {
+      const run = async (chunk?: number) => {
+        const out = attention(graph, graph.buffer(q), graph.buffer(k), graph.buffer(v), { ...shape, chunk });
+        return new Float32Array(await graph.read(out, tokens * heads * dim * 4));
+      };
+      const [whole, chunked] = [await run(), await run(16)]; // 16 + 16 + 16 + 2 queries
+      expect(chunked.reduce((m, x, i) => Math.max(m, Math.abs(x - whole[i])), 0)).toBeLessThan(1e-6);
+      const cpu = reference(q, k, v, shape);
+      expect(chunked.reduce((m, x, i) => Math.max(m, Math.abs(x - cpu[i])), 0)).toBeLessThan(1e-5);
+    } finally {
+      graph.destroy();
+    }
+  });
+});

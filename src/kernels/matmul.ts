@@ -17,6 +17,10 @@ import { fp8Wgsl } from "./fp8";
  * The inner code is generated fully unrolled with named variables: arrays indexed in loops can
  * end up in slow memory instead of registers after WGSL is translated for the GPU driver.
  * Needs K, x/W strides and offsets to be multiples of 4 (true for every Krea 2 layer).
+ *
+ * Input "conv3x3" turns it into a 3×3 convolution (padding 1) without an im2col copy: x is a
+ * channel-last image [H·W, Cin], row m is a pixel, and K = 9 · Cin runs over (tap, channel), so the
+ * loader gathers each pixel's 9 neighbours (zeros outside the image). W is [Cout, (ky, kx, Cin)].
  */
 export const TILE = 128;
 
@@ -54,15 +58,31 @@ const loadW: Record<Weights, string> = {
     ws[at + 3u * TN] = u.w;`,
 };
 
-const load = (t: number, weights: Weights) => /* wgsl */ `
+export type Input = "rows" | "conv3x3";
+
+const loadX: Record<Input, string> = {
+  rows: /* wgsl */ `
+    if (row0 + r < p.m && kq < k4) { v = x[(p.x_offset + (row0 + r) * p.x_stride) / 4u + kq]; }`,
+  conv3x3: /* wgsl */ `
+    if (row0 + r < p.m && kq < k4) {
+      let tap = kq * 4u / p.cin; // 0..8, then the channel inside the tap
+      let c = kq * 4u % p.cin;
+      let px = i32((row0 + r) % p.width) + i32(tap % 3u) - 1;
+      let py = i32((row0 + r) / p.width) + i32(tap / 3u) - 1;
+      if (px >= 0 && py >= 0 && px < i32(p.width) && py < i32(p.m / p.width)) {
+        v = x[((u32(py) * p.width + u32(px)) * p.cin + c) / 4u];
+      }
+    }`,
+};
+
+const load = (t: number, weights: Weights, input: Input) => /* wgsl */ `
   {
     let e = li + ${t * 256}u;
     let r = e / 4u;
     let q = e % 4u;
     let kq = k0 / 4u + q;
     let at = 4u * q * TM + r;
-    var v = vec4<f32>(0.0);
-    if (row0 + r < p.m && kq < k4) { v = x[(p.x_offset + (row0 + r) * p.x_stride) / 4u + kq]; }
+    var v = vec4<f32>(0.0);${loadX[input]}
     xs[at] = v.x;
     xs[at + TM] = v.y;
     xs[at + 2u * TM] = v.z;
@@ -70,12 +90,13 @@ const load = (t: number, weights: Weights) => /* wgsl */ `
 ${loadW[weights]}
   }`;
 
-export const matmulWgsl = (weights: Weights) => /* wgsl */ `
+export const matmulWgsl = (weights: Weights, input: Input = "rows") => /* wgsl */ `
 ${weights === "fp8" ? fp8Wgsl : ""}
 struct Params {
   m: u32, n: u32, k: u32, scale: f32,
   x_stride: u32, w_stride: u32, y_stride: u32,
   x_offset: u32, w_offset: u32, y_offset: u32,
+  width: u32, cin: u32, // conv3x3 only
 }
 
 @group(0) @binding(0) var<storage, read> p: Params;
@@ -106,8 +127,8 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec
 ${lines(16, (i) => `  var acc${i} = vec4<f32>(0.0);`)}
 
   for (var k0 = 0u; k0 < p.k; k0 += TK) {
-${load(0, weights)}
-${load(1, weights)}
+${load(0, weights, input)}
+${load(1, weights, input)}
     workgroupBarrier();
 
     for (var kk = 0u; kk < TK; kk++) {
@@ -129,19 +150,25 @@ ${lines(8, (i) => `  if (row0 + lid.y * 8u + ${i}u < p.m) { store4(row0 + lid.y 
 export const matmulFp8Wgsl = matmulWgsl("fp8");
 export const matmulBf16Wgsl = matmulWgsl("bf16");
 export const matmulF32Wgsl = matmulWgsl("f32");
+export const conv3x3Wgsl = matmulWgsl("f32", "conv3x3");
 
 export type MatmulShape = { m: number; n: number; k: number };
 /** Row strides and offsets in values. Defaults: contiguous x [M, K], W [N, K], y [M, N]. */
 export type MatmulLayout = { xStride?: number; wStride?: number; yStride?: number; xOffset?: number; wOffset?: number; yOffset?: number };
 
 /** Params buffer for matmulWgsl. */
-export function matmulParams({ m, n, k }: MatmulShape, scale: number, layout: MatmulLayout = {}): Uint32Array<ArrayBuffer> {
+export function matmulParams(
+  { m, n, k }: MatmulShape,
+  scale: number,
+  layout: MatmulLayout = {},
+  conv?: { width: number; cin: number },
+): Uint32Array<ArrayBuffer> {
   const { xStride = k, wStride = k, yStride = n, xOffset = 0, wOffset = 0, yOffset = 0 } = layout;
   for (const [name, v] of Object.entries({ K: k, xStride, wStride, xOffset, wOffset })) {
     if (v % 4) throw new Error(`${name} must be a multiple of 4, got ${v}`);
   }
   const params = new Uint32Array(12);
-  params.set([m, n, k, 0, xStride, wStride, yStride, xOffset, wOffset, yOffset]);
+  params.set([m, n, k, 0, xStride, wStride, yStride, xOffset, wOffset, yOffset, conv?.width ?? 0, conv?.cin ?? 0]);
   new Float32Array(params.buffer)[3] = scale;
   return params;
 }
@@ -196,5 +223,19 @@ export async function matmulF32(
     outputs: [outputLength * 4],
     workgroups: matmulWorkgroups(shape),
   });
+  return new Float32Array(y);
+}
+
+/** 3×3 conv, padding 1: image [height · width, cin] (channel-last) → [height · width, cout]. W: [cout, 9 · cin]. */
+export function conv3x3Params(height: number, width: number, cin: number, cout: number) {
+  if (cin % 4) throw new Error(`cin must be a multiple of 4, got ${cin}`);
+  const shape = { m: height * width, n: cout, k: 9 * cin };
+  return { shape, params: matmulParams(shape, 1, {}, { width, cin }) };
+}
+
+/** One-shot 3×3 conv run (tests, debugging). */
+export async function conv3x3(device: GPUDevice, x: Float32Array, w: Float32Array, height: number, width: number, cin: number, cout: number) {
+  const { shape, params } = conv3x3Params(height, width, cin, cout);
+  const [y] = await runCompute(device, { code: conv3x3Wgsl, inputs: [params, x, w], outputs: [shape.m * cout * 4], workgroups: matmulWorkgroups(shape) });
   return new Float32Array(y);
 }

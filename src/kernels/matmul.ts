@@ -8,9 +8,36 @@ import { fp8Wgsl } from "./fp8";
  * Tiles: 128×128 outputs per workgroup (16×16 threads × 8×8 each), K in steps of 16.
  * x and W are read 4 values at a time; W is decoded once per tile into workgroup memory,
  * stored k-major so each thread reads 8 neighbours per step.
+ *
+ * The inner code is generated fully unrolled with named variables: arrays indexed in loops can
+ * end up in slow memory instead of registers after WGSL is translated for the GPU driver.
  * Needs K % 4 == 0 so every row starts on a u32 (true for every Krea 2 layer).
  */
 export const TILE = 128;
+
+const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+const lines = (n: number, line: (i: number) => string) => range(n).map(line).join("\n");
+
+const load = (t: number) => /* wgsl */ `
+  {
+    let e = li + ${t * 256}u;
+    let r = e / 4u;
+    let q = e % 4u;
+    let kq = k0 / 4u + q;
+    let at = 4u * q * TM + r;
+    var v = vec4<f32>(0.0);
+    if (row0 + r < p.m && kq < k4) { v = x[(row0 + r) * k4 + kq]; }
+    xs[at] = v.x;
+    xs[at + TM] = v.y;
+    xs[at + 2u * TM] = v.z;
+    xs[at + 3u * TM] = v.w;
+    var word = 0u; // decodes to 0.0
+    if (col0 + r < p.n && kq < k4) { word = w[(col0 + r) * k4 + kq]; }
+    ws[at] = e4m3_to_f32(fp8_byte(word, 0u));
+    ws[at + TN] = e4m3_to_f32(fp8_byte(word, 1u));
+    ws[at + 2u * TN] = e4m3_to_f32(fp8_byte(word, 2u));
+    ws[at + 3u * TN] = e4m3_to_f32(fp8_byte(word, 3u));
+  }`;
 
 export const matmulFp8Wgsl = /* wgsl */ `
 ${fp8Wgsl}
@@ -27,12 +54,12 @@ const TK = 16u;
 var<workgroup> xs: array<f32, 2048>; // [TK][TM]
 var<workgroup> ws: array<f32, 2048>; // [TK][TN]
 
-fn x8(at: u32) -> array<f32, 8> {
-  return array<f32, 8>(xs[at], xs[at + 1u], xs[at + 2u], xs[at + 3u], xs[at + 4u], xs[at + 5u], xs[at + 6u], xs[at + 7u]);
-}
-
-fn w8(at: u32) -> array<f32, 8> {
-  return array<f32, 8>(ws[at], ws[at + 1u], ws[at + 2u], ws[at + 3u], ws[at + 4u], ws[at + 5u], ws[at + 6u], ws[at + 7u]);
+fn store4(r: u32, c: u32, v: vec4<f32>) {
+  let o = r * p.n + c;
+  if (c < p.n) { y[o] = v.x * p.scale; }
+  if (c + 1u < p.n) { y[o + 1u] = v.y * p.scale; }
+  if (c + 2u < p.n) { y[o + 2u] = v.z * p.scale; }
+  if (c + 3u < p.n) { y[o + 3u] = v.w * p.scale; }
 }
 
 @compute @workgroup_size(16, 16)
@@ -41,54 +68,26 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec
   let row0 = wg.y * TM;
   let col0 = wg.x * TN;
   let k4 = p.k / 4u;
-  var acc: array<vec4<f32>, 16>; // 8 rows × 2 vec4 (8 columns)
+${lines(16, (i) => `  var acc${i} = vec4<f32>(0.0);`)}
 
   for (var k0 = 0u; k0 < p.k; k0 += TK) {
-    // Load: 128 rows × 4 groups of 4 k, for x and W. 2 per thread; 4 neighbouring threads read one row.
-    for (var t = 0u; t < 2u; t++) {
-      let e = li + t * 256u;
-      let r = e / 4u;
-      let q = e % 4u;
-      let kq = k0 / 4u + q;
-      let at = 4u * q * TM + r;
-
-      var v = vec4<f32>(0.0);
-      if (row0 + r < p.m && kq < k4) { v = x[(row0 + r) * k4 + kq]; }
-      xs[at] = v.x;
-      xs[at + TM] = v.y;
-      xs[at + 2u * TM] = v.z;
-      xs[at + 3u * TM] = v.w;
-
-      var word = 0u; // decodes to 0.0
-      if (col0 + r < p.n && kq < k4) { word = w[(col0 + r) * k4 + kq]; }
-      ws[at] = e4m3_to_f32(fp8_byte(word, 0u));
-      ws[at + TN] = e4m3_to_f32(fp8_byte(word, 1u));
-      ws[at + 2u * TN] = e4m3_to_f32(fp8_byte(word, 2u));
-      ws[at + 3u * TN] = e4m3_to_f32(fp8_byte(word, 3u));
-    }
+${load(0)}
+${load(1)}
     workgroupBarrier();
 
     for (var kk = 0u; kk < TK; kk++) {
-      let a = x8(kk * TM + lid.y * 8u);
-      let b = w8(kk * TN + lid.x * 8u);
-      let b0 = vec4<f32>(b[0], b[1], b[2], b[3]);
-      let b1 = vec4<f32>(b[4], b[5], b[6], b[7]);
-      for (var i = 0u; i < 8u; i++) {
-        acc[i * 2u] += a[i] * b0;
-        acc[i * 2u + 1u] += a[i] * b1;
-      }
+      let xa = kk * TM + lid.y * 8u;
+      let wa = kk * TN + lid.x * 8u;
+${lines(8, (i) => `      let a${i} = xs[xa + ${i}u];`)}
+      let b0 = vec4<f32>(ws[wa], ws[wa + 1u], ws[wa + 2u], ws[wa + 3u]);
+      let b1 = vec4<f32>(ws[wa + 4u], ws[wa + 5u], ws[wa + 6u], ws[wa + 7u]);
+${lines(8, (i) => `      acc${2 * i} += a${i} * b0;\n      acc${2 * i + 1} += a${i} * b1;`)}
     }
     workgroupBarrier();
   }
 
-  for (var i = 0u; i < 8u; i++) {
-    let r = row0 + lid.y * 8u + i;
-    if (r >= p.m) { break; }
-    for (var j = 0u; j < 8u; j++) {
-      let c = col0 + lid.x * 8u + j;
-      if (c < p.n) { y[r * p.n + c] = acc[i * 2u + j / 4u][j % 4u] * p.scale; }
-    }
-  }
+  let c0 = col0 + lid.x * 8u;
+${lines(8, (i) => `  if (row0 + lid.y * 8u + ${i}u < p.m) { store4(row0 + lid.y * 8u + ${i}u, c0, acc${2 * i}); store4(row0 + lid.y * 8u + ${i}u, c0 + 4u, acc${2 * i + 1}); }`)}
 }
 `;
 

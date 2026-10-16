@@ -6,6 +6,7 @@ import {
   gatedAddWgsl,
   geluTanhWgsl,
   sigmoidGateWgsl,
+  siluWgsl,
   swigluWgsl,
 } from "../kernels/elementwise";
 import { matmulBf16Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
@@ -31,10 +32,10 @@ export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuf
 
 export type Mod = { scale: Binding; shift: Binding };
 
-/** Zero-centered RMSNorm per row of length d, then (1 + scale) · … + shift. */
-export function norm(graph: Graph, x: GPUBuffer, weight: GPUBuffer, rows: number, d: number, mod: Mod, eps = 1e-5): GPUBuffer {
+/** RMSNorm per row of length d, then (1 + scale) · … + shift. offset 1: zero-centered weight (Krea 2), 0: plain. */
+export function norm(graph: Graph, x: GPUBuffer, weight: GPUBuffer, rows: number, d: number, mod: Mod, eps = 1e-5, offset = 1): GPUBuffer {
   const out = graph.buffer(rows * d * 4);
-  graph.run(rmsnormWgsl, [graph.buffer(rmsnormParams(rows, d, eps, 1)), x, weight, mod.scale, mod.shift, out], rmsnormWorkgroups(rows));
+  graph.run(rmsnormWgsl, [graph.buffer(rmsnormParams(rows, d, eps, offset)), x, weight, mod.scale, mod.shift, out], rmsnormWorkgroups(rows));
   return out;
 }
 
@@ -66,3 +67,5 @@ export const gatedAdd = (graph: Graph, x: GPUBuffer, h: GPUBuffer, g: Binding, n
 export const add = (graph: Graph, x: Binding, h: Binding, n: number) => elementwise(graph, addWgsl, [x, h], n);
 /** GELU, tanh form */
 export const gelu = (graph: Graph, x: GPUBuffer, n: number) => elementwise(graph, geluTanhWgsl, [x], n);
+/** x · sigmoid(x) */
+export const silu = (graph: Graph, x: GPUBuffer, n: number) => elementwise(graph, siluWgsl, [x], n);

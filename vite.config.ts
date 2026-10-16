@@ -18,6 +18,7 @@ export default defineConfig({
         block: resolve(import.meta.dirname, "pages/block/index.html"),
         transformer: resolve(import.meta.dirname, "pages/transformer/index.html"),
         run: resolve(import.meta.dirname, "pages/run/index.html"),
+        vae: resolve(import.meta.dirname, "pages/vae/index.html"),
       },
     },
   },

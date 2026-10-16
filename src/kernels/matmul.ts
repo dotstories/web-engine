@@ -82,7 +82,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec
 export type MatmulShape = { m: number; n: number; k: number };
 
 /** Params buffer for matmulFp8Wgsl. */
-export function matmulParams({ m, n, k }: MatmulShape, scale: number): Uint32Array {
+export function matmulParams({ m, n, k }: MatmulShape, scale: number): Uint32Array<ArrayBuffer> {
   if (k % 4) throw new Error(`K must be a multiple of 4, got ${k}`);
   const params = new Uint32Array(4);
   params.set([m, n, k]);

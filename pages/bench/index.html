@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Benchmark · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ccc; }
+      pre { background: #f4f4f4; padding: 1rem; overflow: auto; font-size: 13px; }
+      button { font: inherit; padding: 0.4rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>How fast would Krea 2 run here?</h1>
+      <p>Times the fp8 matrix multiply (the core of the model) at Krea 2 sizes for a 1024×1024 image, then estimates one image.
+        Uses about 1 GB of GPU memory and takes under a minute.</p>
+      <button id="run" type="button">Run benchmark</button>
+      <p id="status" role="status"></p>
+      <table id="results" hidden>
+        <thead><tr><th>Matmul</th><th>Shape</th><th>ms</th><th>TFLOPS</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="report" hidden>
+        <h2>Report</h2>
+        <button id="copy" type="button">Copy report</button>
+        <pre></pre>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

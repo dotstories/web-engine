@@ -9,8 +9,9 @@ export async function timeMatmul(device: GPUDevice, shape: MatmulShape, iteratio
   const module = device.createShaderModule({ code: matmulFp8Wgsl });
   const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "main" } });
   const storage = (size: number) => device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  const buffers = [storage(16), storage(m * k * 4), storage(n * k), storage(m * n * 4)];
-  device.queue.writeBuffer(buffers[0], 0, matmulParams(shape, 1));
+  const params = matmulParams(shape, 1);
+  const buffers = [storage(params.byteLength), storage(m * k * 4), storage(n * k), storage(m * n * 4)];
+  device.queue.writeBuffer(buffers[0], 0, params);
   const bindGroup = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
     entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })),

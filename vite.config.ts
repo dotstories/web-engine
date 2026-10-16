@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, "index.html"),
         probe: resolve(import.meta.dirname, "pages/probe/index.html"),
+        model: resolve(import.meta.dirname, "pages/model/index.html"),
       },
     },
   },

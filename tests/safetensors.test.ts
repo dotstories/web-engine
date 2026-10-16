@@ -52,3 +52,11 @@ describe("readHeader", () => {
     it("errors are SafetensorsError", () => expect(readHeader(new Blob([]))).rejects.toBeInstanceOf(SafetensorsError));
   });
 });
+
+describe("readTensor with a limit", () => {
+  it("reads only the first bytes of a tensor", async () => {
+    const file = makeSafetensors({ a: { dtype: "U8", shape: [4], data: new Uint8Array([1, 2, 3, 4]) } });
+    const st = await readHeader(file);
+    expect(await readTensor(file, st.tensors.get("a")!, 2)).toEqual(new Uint8Array([1, 2]));
+  });
+});

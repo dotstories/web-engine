@@ -34,11 +34,12 @@ const E4M3 = table(e4m3);
 const E5M2 = table(e5m2);
 
 /** Little-endian tensor bytes → Float32Array. */
-export function toFloat32(dtype: string, bytes: Uint8Array): Float32Array {
-  const words = () => new Uint16Array(bytes.slice().buffer);
+export function toFloat32(dtype: string, bytes: Uint8Array): Float32Array<ArrayBuffer> {
+  const copy = () => new Uint8Array(bytes).buffer; // aligned, plain ArrayBuffer
+  const words = () => new Uint16Array(copy());
   switch (dtype) {
     case "F32":
-      return new Float32Array(bytes.slice().buffer);
+      return new Float32Array(copy());
     case "BF16":
       return new Float32Array(Uint32Array.from(words(), (w) => w << 16).buffer);
     case "F16":

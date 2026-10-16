@@ -9,25 +9,39 @@ import {
   siluWgsl,
   swigluWgsl,
 } from "../kernels/elementwise";
-import { matmulBf16Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
+import { matmulBf16Wgsl, matmulF32Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
 import { rmsnormParams, rmsnormWgsl, rmsnormWorkgroups } from "../kernels/rmsnorm";
 import { ropeKernel, ropeWorkgroups, type Pairing } from "../kernels/rope";
 
 /** The kernels as graph steps: each takes GPU buffers, queues one dispatch and returns its output buffer. */
 
 /**
- * A linear layer from the model file: W [n, k] as stored (fp8 packed 4 per u32 with a scalar
- * weight_scale, or bf16 packed 2 per u32), and an optional f32 bias [n].
+ * A linear layer: W [n, k] as stored (fp8 packed 4 per u32 with a scalar weight_scale, bf16 packed
+ * 2 per u32, or f32), an optional f32 bias [n], and an optional LoRA applied at run time:
+ * down [rank, k] and up [n, rank] with up.scale = strength · alpha / rank (rank a multiple of 4).
  */
-export type Linear = { buffer: GPUBuffer; dtype: "fp8" | "bf16"; scale: number; n: number; k: number; bias?: GPUBuffer };
+export type Linear = {
+  buffer: GPUBuffer;
+  dtype: "fp8" | "bf16" | "f32";
+  scale: number;
+  n: number;
+  k: number;
+  bias?: GPUBuffer;
+  lora?: { down: Linear; up: Linear };
+};
 
-/** y[m, n] = x[m, k] · Wᵀ (+ bias) */
+const MATMUL = { fp8: matmulFp8Wgsl, bf16: matmulBf16Wgsl, f32: matmulF32Wgsl };
+
+/** y[m, n] = x[m, k] · Wᵀ (+ bias) (+ up.scale · (x · downᵀ) · upᵀ). Same as ComfyUI's merged W + Δ, without touching W. */
 export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuffer {
   const shape = { m, n: w.n, k: w.k };
   const y = graph.buffer(m * w.n * 4);
-  const code = w.dtype === "fp8" ? matmulFp8Wgsl : matmulBf16Wgsl;
-  graph.run(code, [graph.buffer(matmulParams(shape, w.scale)), x, w.buffer, y], matmulWorkgroups(shape));
-  return w.bias ? elementwise(graph, addBiasWgsl, [y, w.bias], m * w.n, w.n) : y;
+  graph.run(MATMUL[w.dtype], [graph.buffer(matmulParams(shape, w.scale)), x, w.buffer, y], matmulWorkgroups(shape));
+  const out = w.bias ? elementwise(graph, addBiasWgsl, [y, w.bias], m * w.n, w.n) : y;
+  if (!w.lora) return out;
+  const { down, up } = w.lora;
+  if (down.k !== w.k || up.n !== w.n || up.k !== down.n || down.n % 4) throw new Error("LoRA shapes do not fit the linear layer");
+  return add(graph, out, linear(graph, linear(graph, x, down, m), up, m), m * w.n);
 }
 
 export type Mod = { scale: Binding; shift: Binding };

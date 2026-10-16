@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Decoder check · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; margin: 0.5rem 0; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+      th, td { text-align: left; padding: 0.3rem 0.6rem; border-bottom: 1px solid #ccc; }
+      pre { background: #f4f4f4; padding: 1rem; overflow: auto; font-size: 13px; }
+      button { font: inherit; padding: 0.4rem 1rem; }
+      figure { display: inline-block; margin: 0 1rem 1rem 0; }
+      canvas { width: 256px; height: 256px; image-rendering: pixelated; border: 1px solid #ccc; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Does the image decoder match ComfyUI?</h1>
+      <p>Decodes the latent from <code>tools/reference/vae.py</code> with your VAE file in the browser and compares every
+        stage with ComfyUI's output.</p>
+      <label>VAE file <input id="vae" type="file" accept=".safetensors" /></label>
+      <label>Reference file <input id="reference" type="file" accept=".safetensors" /></label>
+      <button id="run" type="button">Decode</button>
+      <p id="status" role="status"></p>
+      <div id="pictures" hidden>
+        <figure><canvas id="ours"></canvas><figcaption>Browser</figcaption></figure>
+        <figure><canvas id="theirs"></canvas><figcaption>ComfyUI</figcaption></figure>
+      </div>
+      <table id="results" hidden>
+        <thead><tr><th>Stage</th><th>Cosine</th><th>Relative error</th><th>Result</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="report" hidden>
+        <h2>Report</h2>
+        <button id="copy" type="button">Copy report</button>
+        <pre></pre>
+      </div>
+      <p><small id="build"></small></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

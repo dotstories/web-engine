@@ -10,6 +10,8 @@ export type Report = {
   quotaBytes: number | null;
   opfsReadBytesPerSec: number | null;
   uploadBytesPerSec: number | null;
+  persisted: boolean | null; // persistent storage granted (lifts the per-site limit in some browsers)
+  errors: Record<string, string>; // why a measurement failed, by gate id
 };
 
 export type Gate = { id: string; label: string; need: string; value: string; pass: boolean };
@@ -18,16 +20,17 @@ export function formatBytes(bytes: number): string {
   return bytes >= GB ? `${+(bytes / GB).toFixed(1)} GB` : `${Math.round(bytes / MB)} MB`;
 }
 
-const atLeast = (id: string, label: string, value: number | null, need: number, unit = "") => ({
-  id,
-  label,
-  need: `≥ ${formatBytes(need)}${unit}`,
-  value: value === null ? "not measured" : `${formatBytes(value)}${unit}`,
-  pass: value !== null && value >= need,
-});
+const missing = (error?: string) => (error ? `failed: ${error}` : "not measured");
 
 /** What Krea 2 in the browser needs (see the plan's W0 gate). */
 export function evaluate(r: Report): Gate[] {
+  const atLeast = (id: string, label: string, value: number | null, need: number, unit = "") => ({
+    id,
+    label,
+    need: `≥ ${formatBytes(need)}${unit}`,
+    value: value === null ? missing(r.errors[id]) : `${formatBytes(value)}${unit}`,
+    pass: value !== null && value >= need,
+  });
   const f16 = r.features.includes("shader-f16");
   return [
     { id: "webgpu", label: "WebGPU GPU", need: "found", value: r.adapter?.vendor || (r.adapter ? "unknown" : "none"), pass: !!r.adapter },

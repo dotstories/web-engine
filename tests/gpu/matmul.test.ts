@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getDevice } from "../../src/gpu/compute";
-import { matmulF32, matmulFp8, matmulParams } from "../../src/kernels/matmul";
+import { matmulBf16, matmulF32, matmulFp8, matmulParams } from "../../src/kernels/matmul";
+import { toFloat32 } from "../../src/weights/fp8";
 import { e4m3 } from "../../src/weights/fp8";
 
 /** Small deterministic random numbers (same every run). */
@@ -101,5 +102,23 @@ describe("matmulF32", () => {
         err = Math.max(err, Math.abs(scores[i * 24 + j] - s));
       }
     expect(err).toBeLessThan(1e-4);
+  });
+});
+
+describe("matmulBf16", () => {
+  it.each([
+    [37, 70, 100],
+    [8, 1536, 6144], // a Krea 2 shape
+  ])("matches the CPU reference for M=%i N=%i K=%i", async (m, n, k) => {
+    const r = rng(9);
+    const x = Float32Array.from({ length: m * k }, () => r() * 2 - 1);
+    // bf16 = the top half of an f32
+    const f32 = Float32Array.from({ length: n * k }, () => r() * 2 - 1);
+    const w = new Uint8Array(Uint16Array.from(new Uint32Array(f32.buffer), (u) => u >>> 16).buffer);
+    const wf = toFloat32("BF16", w);
+    const gpu = await matmulBf16(await getDevice(), x, w, 0.5, { m, n, k });
+    const cpu = new Float64Array(m * n);
+    for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) for (let t = 0; t < k; t++) cpu[i * n + j] += x[i * k + t] * wf[j * k + t] * 0.5;
+    expect(relError(gpu, cpu)).toBeLessThan(1e-5);
   });
 });

@@ -3,3 +3,6 @@ Copyright 2026 DotStories contributors
 
 This product includes software developed by the DotStories community
 (https://github.com/dotstories/web-engine).
+
+The Qwen2 tokenizer files in public/tokenizers/qwen2 are by the Qwen team
+(Alibaba Cloud), licensed under the Apache License 2.0.

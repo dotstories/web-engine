@@ -3,8 +3,8 @@ import { fp8Wgsl } from "./fp8";
 
 /**
  * y[M, N] = x[M, K] · Wᵀ × scale, with W stored like PyTorch's nn.Linear: [N, K].
- * W is either fp8 e4m3fn packed 4 per u32 (straight from the model file) or f32 (e.g. K or Vᵀ in
- * attention). Accumulates in f32.
+ * W is fp8 e4m3fn packed 4 per u32 or bf16 packed 2 per u32 (both straight from the model file),
+ * or f32 (e.g. K or Vᵀ in attention). Accumulates in f32.
  *
  * Rows can be strided and offset (in values), so one attention head can be picked out of
  * [tokens, heads, 128] without copying: row r of x starts at xOffset + r · xStride, and so on.
@@ -20,7 +20,7 @@ import { fp8Wgsl } from "./fp8";
  */
 export const TILE = 128;
 
-export type Weights = "fp8" | "f32";
+export type Weights = "fp8" | "bf16" | "f32";
 
 const range = (n: number) => Array.from({ length: n }, (_, i) => i);
 const lines = (n: number, line: (i: number) => string) => range(n).map(line).join("\n");
@@ -33,6 +33,18 @@ const loadW: Record<Weights, string> = {
     ws[at + TN] = e4m3_to_f32(fp8_byte(word, 1u));
     ws[at + 2u * TN] = e4m3_to_f32(fp8_byte(word, 2u));
     ws[at + 3u * TN] = e4m3_to_f32(fp8_byte(word, 3u));`,
+  bf16: /* wgsl */ `
+    var lo = 0u; // two bf16 per word, first one in the low half; 0 decodes to 0.0
+    var hi = 0u;
+    if (col0 + r < p.n && kq < k4) {
+      let word = (p.w_offset + (col0 + r) * p.w_stride) / 2u + kq * 2u;
+      lo = w[word];
+      hi = w[word + 1u];
+    }
+    ws[at] = bitcast<f32>(lo << 16u);
+    ws[at + TN] = bitcast<f32>(lo & 0xffff0000u);
+    ws[at + 2u * TN] = bitcast<f32>(hi << 16u);
+    ws[at + 3u * TN] = bitcast<f32>(hi & 0xffff0000u);`,
   f32: /* wgsl */ `
     var u = vec4<f32>(0.0);
     if (col0 + r < p.n && kq < k4) { u = w[(p.w_offset + (col0 + r) * p.w_stride) / 4u + kq]; }
@@ -68,7 +80,7 @@ struct Params {
 
 @group(0) @binding(0) var<storage, read> p: Params;
 @group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read> w: array<${weights === "fp8" ? "u32" : "vec4<f32>"}>;
+@group(0) @binding(2) var<storage, read> w: array<${weights === "f32" ? "vec4<f32>" : "u32"}>;
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 
 const TM = 128u;
@@ -115,6 +127,7 @@ ${lines(8, (i) => `  if (row0 + lid.y * 8u + ${i}u < p.m) { store4(row0 + lid.y 
 `;
 
 export const matmulFp8Wgsl = matmulWgsl("fp8");
+export const matmulBf16Wgsl = matmulWgsl("bf16");
 export const matmulF32Wgsl = matmulWgsl("f32");
 
 export type MatmulShape = { m: number; n: number; k: number };
@@ -147,6 +160,19 @@ export async function matmulFp8(device: GPUDevice, x: Float32Array, w: Uint8Arra
   if (x.length !== m * k || w.length !== n * k) throw new Error("x or w does not match the shape");
   const [y] = await runCompute(device, {
     code: matmulFp8Wgsl,
+    inputs: [matmulParams(shape, scale), x, padTo4(w)],
+    outputs: [m * n * 4],
+    workgroups: matmulWorkgroups(shape),
+  });
+  return new Float32Array(y);
+}
+
+/** One-shot run with bf16 W [N, K] given as raw little-endian bytes (2 per value). */
+export async function matmulBf16(device: GPUDevice, x: Float32Array, w: Uint8Array, scale: number, shape: MatmulShape) {
+  const { m, n, k } = shape;
+  if (x.length !== m * k || w.length !== n * k * 2) throw new Error("x or w does not match the shape");
+  const [y] = await runCompute(device, {
+    code: matmulBf16Wgsl,
     inputs: [matmulParams(shape, scale), x, padTo4(w)],
     outputs: [m * n * 4],
     workgroups: matmulWorkgroups(shape),

@@ -7,6 +7,8 @@ const quick = new URLSearchParams(location.search).has("quick"); // CI: tiny sha
 const tokens = quick ? 64 : tokensFor(1024, 1024);
 const shapes = BLOCK_MATMULS.map((s) => (quick ? { ...s, n: s.n / 64, k: s.k / 64 } : s));
 
+$("#build").textContent = `Build ${__BUILD__}`;
+
 $("#run").addEventListener("click", async () => {
   const run = $<HTMLButtonElement>("#run");
   const status = $("#status");
@@ -32,7 +34,7 @@ $("#run").addEventListener("click", async () => {
     );
     $("#results").hidden = false;
     status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).`;
-    $("#report pre").textContent = JSON.stringify({ tokens, timings, estimate, userAgent: navigator.userAgent }, null, 2);
+    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, timings, estimate, userAgent: navigator.userAgent }, null, 2);
     $("#report").hidden = false;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;

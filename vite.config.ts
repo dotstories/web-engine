@@ -7,6 +7,7 @@ import { webgpuFlags } from "./chrome-webgpu";
 // Each test page is its own entry. base "./" so the build works from any path.
 export default defineConfig({
   base: "./",
+  define: { __BUILD__: JSON.stringify(process.env.GITHUB_SHA?.slice(0, 7) ?? "dev") },
   build: {
     rollupOptions: {
       input: {

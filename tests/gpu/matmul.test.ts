@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getDevice } from "../../src/gpu/compute";
-import { matmulFp8, matmulParams } from "../../src/kernels/matmul";
+import { matmulF32, matmulFp8, matmulParams } from "../../src/kernels/matmul";
 import { e4m3 } from "../../src/weights/fp8";
 
 /** Small deterministic random numbers (same every run). */
@@ -61,7 +61,45 @@ describe("matmulFp8", () => {
     expect(relError(gpu, reference(x, w, 0.0018833705689758062, m, n, k))).toBeLessThan(1e-5);
   });
 
-  it("refuses K that is not a multiple of 4", () => {
-    expect(() => matmulParams({ m: 1, n: 1, k: 6 }, 1)).toThrow(/multiple of 4/);
+  it("refuses K, strides or offsets that are not a multiple of 4", () => {
+    expect(() => matmulParams({ m: 1, n: 1, k: 6 }, 1)).toThrow(/K must be a multiple of 4/);
+    expect(() => matmulParams({ m: 1, n: 1, k: 4 }, 1, { xStride: 6 })).toThrow(/xStride/);
+    expect(() => matmulParams({ m: 1, n: 1, k: 4 }, 1, { wOffset: 2 })).toThrow(/wOffset/);
+  });
+});
+
+describe("matmulF32", () => {
+  const floats = (n: number, seed: number) => {
+    const r = rng(seed);
+    return Float32Array.from({ length: n }, () => r() * 2 - 1);
+  };
+
+  it.each([
+    [37, 70, 100],
+    [130, 65, 36],
+  ])("matches the CPU reference for M=%i N=%i K=%i", async (m, n, k) => {
+    const [x, w] = [floats(m * k, 1), floats(n * k, 2)];
+    const gpu = await matmulF32(await getDevice(), x, w, 0.5, { m, n, k });
+    const cpu = new Float64Array(m * n);
+    for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) for (let t = 0; t < k; t++) cpu[i * n + j] += x[i * k + t] * w[j * k + t] * 0.5;
+    expect(relError(gpu, cpu)).toBeLessThan(1e-5);
+  });
+
+  it("picks one head out of [tokens, heads, dim] with strides and offsets (Q·Kᵀ of head 2)", async () => {
+    const [tokens, heads, kvHeads, dim] = [20, 4, 2, 128];
+    const q = floats(tokens * heads * dim, 3);
+    const k = floats(tokens * kvHeads * dim, 4);
+    const [h, g] = [2, 1]; // query head 2 uses kv head 1
+    const scores = await matmulF32(await getDevice(), q, k, 1, { m: tokens, n: tokens, k: dim }, {
+      xStride: heads * dim, xOffset: h * dim, wStride: kvHeads * dim, wOffset: g * dim, yStride: 24,
+    }, tokens * 24);
+    let err = 0;
+    for (let i = 0; i < tokens; i++)
+      for (let j = 0; j < tokens; j++) {
+        let s = 0;
+        for (let d = 0; d < dim; d++) s += q[(i * heads + h) * dim + d] * k[(j * kvHeads + g) * dim + d];
+        err = Math.max(err, Math.abs(scores[i * 24 + j] - s));
+      }
+    expect(err).toBeLessThan(1e-4);
   });
 });

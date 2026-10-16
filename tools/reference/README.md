@@ -5,7 +5,8 @@ so the browser engine can be checked against them.
 
 | Script | What it saves |
 |---|---|
-| `block.py` | Input, timestep modulation, positions and output of one Krea 2 transformer block |
+| `block.py` | Input, timestep modulation, positions and output of one Krea 2 transformer block (diffusers) |
+| `transformer.py` | Krea 2 with only its first N blocks (ComfyUI's code): inputs, output and every step in between |
 
 Run with [uv](https://docs.astral.sh/uv/) (no setup needed):
 
@@ -15,6 +16,9 @@ uv run --with torch --with "diffusers>=0.40" --with safetensors \
 ```
 
 The model file stays where it is; only one block is read (about 0.5 GB).
+
+`transformer.py` uses ComfyUI's own model code, so run it with the Python of your ComfyUI install
+(Comfy Desktop: `%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Installs\<install>\.venv\Scripts\python.exe`).
 
 ## License
 

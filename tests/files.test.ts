@@ -45,4 +45,12 @@ describe("findModelFiles", () => {
     expect(files.vae).toBeDefined();
     expect(missing).toEqual(["diffusion_models/krea2_turbo_fp8_scaled.safetensors", "text_encoders/qwen3vl_4b_fp8_scaled.safetensors"]);
   });
+
+  it("finds the optional Dark Fantasy Kit LoRA in loras/, and never lists it as missing", async () => {
+    const withLora = await findModelFiles(folder("models", { ...models, loras: { "krea2_darkbrush.safetensors": true } }));
+    expect(withLora.files.lora?.name).toBe("krea2_darkbrush.safetensors");
+    const without = await findModelFiles(folder("models", models));
+    expect(without.files.lora).toBeUndefined();
+    expect(without.missing).toEqual([]);
+  });
 });

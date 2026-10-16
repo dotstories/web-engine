@@ -8,6 +8,7 @@ import { runCompute } from "../gpu/compute";
  * - addBias:     out = x + b[i % d]           (bias of the bf16 linear layers around the blocks)
  * - geluTanh:    out = GELU(x), tanh form     (time and text MLPs)
  * - add:         out = x + h                  (plain residual in the text fusion blocks)
+ * - silu:        out = x · sigmoid(x)         (image decoder)
  * 256 values per workgroup; big tensors use the y dimension of the dispatch.
  */
 const THREADS = 256;
@@ -76,6 +77,12 @@ export const addWgsl = kernel(
   "out[i] = x[i] + h[i];",
 );
 
+export const siluWgsl = kernel(
+  `@group(0) @binding(1) var<storage, read> x: array<f32>;
+@group(0) @binding(2) var<storage, read_write> out: array<f32>;`,
+  "out[i] = x[i] * sigmoid(x[i]);",
+);
+
 export function elementwiseWorkgroups(n: number): [number, number] {
   const groups = Math.ceil(n / THREADS);
   return [Math.min(groups, GROUPS_PER_DIM), Math.ceil(groups / GROUPS_PER_DIM)];
@@ -102,3 +109,4 @@ export const gatedAdd = (device: GPUDevice, x: Float32Array, h: Float32Array, g:
 export const addBias = (device: GPUDevice, x: Float32Array, b: Float32Array) => run(device, addBiasWgsl, [x, b], b.length, false);
 export const geluTanh = (device: GPUDevice, x: Float32Array) => run(device, geluTanhWgsl, [x], 1);
 export const add = (device: GPUDevice, x: Float32Array, h: Float32Array) => run(device, addWgsl, [x, h], 1);
+export const silu = (device: GPUDevice, x: Float32Array) => run(device, siluWgsl, [x], 1);

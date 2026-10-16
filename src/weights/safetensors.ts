@@ -63,7 +63,8 @@ export async function readHeader(file: Blob): Promise<Safetensors> {
   return { tensors, metadata: metadata as Record<string, string> };
 }
 
-/** The raw bytes of one tensor. */
-export async function readTensor(file: Blob, tensor: TensorInfo): Promise<Uint8Array> {
-  return new Uint8Array(await file.slice(tensor.offset, tensor.offset + tensor.size).arrayBuffer());
+/** The raw bytes of one tensor (or only its first `limit` bytes). */
+export async function readTensor(file: Blob, tensor: TensorInfo, limit = tensor.size): Promise<Uint8Array> {
+  const end = tensor.offset + Math.min(limit, tensor.size);
+  return new Uint8Array(await file.slice(tensor.offset, end).arrayBuffer());
 }

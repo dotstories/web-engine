@@ -1,6 +1,8 @@
 /// <reference types="vitest/config" />
+/// <reference types="@vitest/browser/providers/playwright" />
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { webgpuFlags } from "./chrome-webgpu";
 
 // Each test page is its own entry. base "./" so the build works from any path.
 export default defineConfig({
@@ -15,6 +17,22 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["tests/**/*.test.ts"],
+    projects: [
+      { extends: true, test: { name: "unit", include: ["tests/**/*.test.ts"], exclude: ["tests/gpu/**"] } },
+      {
+        // GPU kernels run in real Chrome with WebGPU.
+        extends: true,
+        test: {
+          name: "gpu",
+          include: ["tests/gpu/**/*.test.ts"],
+          browser: {
+            enabled: true,
+            provider: "playwright",
+            headless: true,
+            instances: [{ browser: "chromium", launch: { args: webgpuFlags } }],
+          },
+        },
+      },
+    ],
   },
 });

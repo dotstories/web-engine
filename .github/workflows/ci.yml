@@ -74,6 +74,7 @@ jobs:
       - run: scripts/ci.sh pnpm test
       - run: scripts/ci.sh pnpm build
       - run: scripts/ci.sh pnpm exec playwright install --with-deps chromium
+      - run: scripts/ci.sh pnpm test:gpu
       - run: scripts/ci.sh pnpm test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()

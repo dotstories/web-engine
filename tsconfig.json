@@ -12,5 +12,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "tests", "e2e", "*.config.ts"]
+  "include": ["src", "pages", "tests", "e2e", "*.config.ts"]
 }

@@ -19,6 +19,7 @@ export default defineConfig({
         transformer: resolve(import.meta.dirname, "pages/transformer/index.html"),
         run: resolve(import.meta.dirname, "pages/run/index.html"),
         vae: resolve(import.meta.dirname, "pages/vae/index.html"),
+        text: resolve(import.meta.dirname, "pages/text/index.html"),
       },
     },
   },

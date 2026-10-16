@@ -13,6 +13,7 @@ export default defineConfig({
         index: resolve(import.meta.dirname, "index.html"),
         probe: resolve(import.meta.dirname, "pages/probe/index.html"),
         model: resolve(import.meta.dirname, "pages/model/index.html"),
+        bench: resolve(import.meta.dirname, "pages/bench/index.html"),
       },
     },
   },

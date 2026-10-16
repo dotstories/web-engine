@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffusersName, matchLora } from "../src/weights/lora";
+import { diffusersName, loraMatrix, matchLora } from "../src/weights/lora";
 import { readHeader } from "../src/weights/safetensors";
 import { makeSafetensors } from "./helpers";
 
@@ -115,5 +115,33 @@ describe("matchLora", () => {
 
   it("rejects a file with no LoRA weights for this model", async () => {
     await expect(match({ "something.else": t("F32", [1]) })).rejects.toThrow("No LoRA weights for this model in the file");
+  });
+});
+
+describe("loraMatrix", () => {
+  const f32bytes = (values: number[]) => new Uint8Array(new Float32Array(values).buffer);
+
+  it("keeps bf16 as bf16 when the rank is a multiple of 4", () => {
+    const bytes = new Uint8Array(4 * 2 * 2).map((_, i) => i);
+    const m = loraMatrix("BF16", bytes, 4, 2, "rows");
+    expect(m).toMatchObject({ dtype: "bf16", rows: 4, cols: 2 });
+    expect(new Uint8Array(m.data.buffer)).toEqual(bytes);
+  });
+
+  it("pads down [rank, k] with zero rows and up [n, rank] with zero columns, as f32", () => {
+    const down = loraMatrix("F32", f32bytes([1, 2, 3, 4, 5, 6]), 3, 2, "rows"); // rank 3, k 2
+    expect(down).toMatchObject({ dtype: "f32", rows: 4, cols: 2 });
+    expect(Array.from(down.data)).toEqual([1, 2, 3, 4, 5, 6, 0, 0]);
+
+    const up = loraMatrix("F32", f32bytes([1, 2, 3, 4, 5, 6]), 2, 3, "cols"); // n 2, rank 3
+    expect(up).toMatchObject({ dtype: "f32", rows: 2, cols: 4 });
+    expect(Array.from(up.data)).toEqual([1, 2, 3, 0, 4, 5, 6, 0]);
+  });
+
+  it("turns F16 into f32", () => {
+    const half = new Uint8Array(new Uint16Array([0x3c00, 0xc000, 0x3800, 0]).buffer); // 1, -2, 0.5, 0
+    const m = loraMatrix("F16", half, 4, 1, "rows");
+    expect(m.dtype).toBe("f32");
+    expect(Array.from(m.data)).toEqual([1, -2, 0.5, 0]);
   });
 });

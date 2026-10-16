@@ -1,6 +1,7 @@
 import type { Graph } from "../gpu/graph";
 import { toFloat32 } from "../weights/fp8";
-import { readTensor, type Safetensors } from "../weights/safetensors";
+import { loraMatrix, type Lora } from "../weights/lora";
+import { readTensor, type Safetensors, type TensorInfo } from "../weights/safetensors";
 import type { AttentionMlpWeights, BlockWeights } from "./block";
 import type { Linear } from "./ops";
 import type { TransformerWeights } from "./transformer";
@@ -13,8 +14,16 @@ function tensor(st: Safetensors, name: string) {
   return t;
 }
 
+/** A LoRA to apply while loading: its file, the matched targets (matchLora) and the strength (ComfyUI strength_model). */
+export type LoraWeights = { file: Blob; lora: Lora; strength: number };
+
+async function loraPart(graph: Graph, file: Blob, info: TensorInfo, pad: "rows" | "cols", scale: number): Promise<Linear> {
+  const m = loraMatrix(info.dtype, await readTensor(file, info), info.shape[0], info.shape[1], pad);
+  return { buffer: graph.buffer(m.data), dtype: m.dtype, scale, n: m.rows, k: m.cols };
+}
+
 /** A linear layer as stored: fp8 [n, k] with its scalar weight_scale, or bf16 [n, k]; plus its bias if it has one. */
-export async function loadLinear(graph: Graph, file: Blob, st: Safetensors, name: string): Promise<Linear> {
+export async function loadLinear(graph: Graph, file: Blob, st: Safetensors, name: string, lora?: LoraWeights): Promise<Linear> {
   const w = tensor(st, `${name}.weight`);
   if (w.shape.length !== 2 || (w.dtype !== "F8_E4M3" && w.dtype !== "BF16")) {
     throw new Error(`${name}.weight: expected a 2D F8_E4M3 or BF16 tensor, got ${w.dtype} ${JSON.stringify(w.shape)}`);
@@ -22,7 +31,7 @@ export async function loadLinear(graph: Graph, file: Blob, st: Safetensors, name
   const bytes = await readTensor(file, w);
   const fp8 = w.dtype === "F8_E4M3";
   const bias = st.tensors.has(`${name}.bias`) ? graph.buffer(await loadFloats(file, st, `${name}.bias`)) : undefined;
-  return {
+  const linear: Linear = {
     buffer: graph.buffer(new Uint32Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength / 4)),
     dtype: fp8 ? "fp8" : "bf16",
     scale: fp8 ? (await loadFloats(file, st, `${name}.weight_scale`))[0] : 1,
@@ -30,6 +39,14 @@ export async function loadLinear(graph: Graph, file: Blob, st: Safetensors, name
     k: w.shape[1],
     bias,
   };
+  const target = lora?.strength ? lora.lora.targets.get(name) : undefined;
+  if (lora && target) {
+    linear.lora = {
+      down: await loraPart(graph, lora.file, target.down, "rows", 1),
+      up: await loraPart(graph, lora.file, target.up, "cols", lora.strength * target.scale),
+    };
+  }
+  return linear;
 }
 
 /** Any float tensor as f32 on the CPU (norm weights, modulation tables are small). */
@@ -39,8 +56,8 @@ export async function loadFloats(file: Blob, st: Safetensors, name: string): Pro
 }
 
 /** Attention + MLP + norms: the same names in single-stream and text fusion blocks. */
-async function loadAttentionMlp(graph: Graph, file: Blob, st: Safetensors, prefix: string): Promise<AttentionMlpWeights> {
-  const lin = (name: string) => loadLinear(graph, file, st, `${prefix}.${name}`);
+async function loadAttentionMlp(graph: Graph, file: Blob, st: Safetensors, prefix: string, lora?: LoraWeights): Promise<AttentionMlpWeights> {
+  const lin = (name: string) => loadLinear(graph, file, st, `${prefix}.${name}`, lora);
   const vec = async (name: string) => graph.buffer(await loadFloats(file, st, `${prefix}.${name}`));
   return {
     wq: await lin("attn.wq"),
@@ -58,9 +75,9 @@ async function loadAttentionMlp(graph: Graph, file: Blob, st: Safetensors, prefi
   };
 }
 
-export async function loadBlock(graph: Graph, file: Blob, st: Safetensors, index: number): Promise<BlockWeights> {
+export async function loadBlock(graph: Graph, file: Blob, st: Safetensors, index: number, lora?: LoraWeights): Promise<BlockWeights> {
   const prefix = `blocks.${index}`;
-  return { ...(await loadAttentionMlp(graph, file, st, prefix)), table: graph.buffer(await loadFloats(file, st, `${prefix}.mod.lin`)) };
+  return { ...(await loadAttentionMlp(graph, file, st, prefix, lora)), table: graph.buffer(await loadFloats(file, st, `${prefix}.mod.lin`)) };
 }
 
 /** Everything the transformer needs, with only the first `blocks` blocks (28 for the full model). */
@@ -70,10 +87,12 @@ export async function loadTransformer(
   st: Safetensors,
   blocks: number,
   onProgress?: (done: number, total: number) => void,
+  lora?: LoraWeights,
 ): Promise<TransformerWeights> {
-  const lin = (name: string) => loadLinear(graph, file, st, name);
+  if (lora?.lora.targets.has("txtfusion.projector")) throw new Error("This LoRA changes txtfusion.projector, which is not supported yet");
+  const lin = (name: string) => loadLinear(graph, file, st, name, lora);
   const vec = async (name: string) => graph.buffer(await loadFloats(file, st, name));
-  const fusion = (kind: string) => Promise.all([0, 1].map((i) => loadAttentionMlp(graph, file, st, `txtfusion.${kind}.${i}`)));
+  const fusion = (kind: string) => Promise.all([0, 1].map((i) => loadAttentionMlp(graph, file, st, `txtfusion.${kind}.${i}`, lora)));
   const lastTable = await loadFloats(file, st, "last.modulation.lin"); // [2, hidden]: scale, shift
   const hidden = lastTable.length / 2;
 
@@ -95,7 +114,7 @@ export async function loadTransformer(
   };
   const loaded: BlockWeights[] = [];
   for (let i = 0; i < blocks; i++) {
-    loaded.push(await loadBlock(graph, file, st, i));
+    loaded.push(await loadBlock(graph, file, st, i, lora));
     onProgress?.(i + 1, blocks);
     await graph.device.queue.onSubmittedWorkDone(); // let uploads finish before reading more (bounded RAM)
   }

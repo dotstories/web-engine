@@ -3,6 +3,10 @@ import { getDevice } from "../../src/gpu/compute";
 import { Graph } from "../../src/gpu/graph";
 import { compare } from "../../src/model/compare";
 import { linear, type Linear } from "../../src/model/ops";
+import { loadLinear } from "../../src/model/weights";
+import { matchLora } from "../../src/weights/lora";
+import { readHeader } from "../../src/weights/safetensors";
+import { makeSafetensors } from "../helpers";
 import { e4m3, toFloat32 } from "../../src/weights/fp8";
 
 let seed = 7;
@@ -79,6 +83,35 @@ it("rejects a LoRA rank that is not a multiple of 4", async () => {
     const lin = (n: number, k: number, scale = 1): Linear => ({ buffer: graph.buffer(n * k * 4), dtype: "f32", scale, n, k });
     const w: Linear = { ...lin(8, 8), lora: { down: lin(3, 8), up: lin(8, 3) } };
     expect(() => linear(graph, graph.buffer(8 * 4), w, 1)).toThrow("LoRA shapes do not fit the linear layer");
+  } finally {
+    graph.destroy();
+  }
+});
+
+it("loads a LoRA with the model weight (kohya names, alpha, rank 3 padded) and applies strength · alpha / rank", async () => {
+  const [m, n, k, r, alpha, strength] = [3, 8, 12, 3, 1.5, 0.8];
+  const graph = new Graph(await getDevice());
+  try {
+    const w = bf16(n * k);
+    const down = floats(r * k);
+    const up = floats(n * r);
+    const model = makeSafetensors({ "blocks.0.attn.wq.weight": { dtype: "BF16", shape: [n, k], data: w.bytes } });
+    const loraFile = makeSafetensors({
+      "lora_unet_blocks_0_attn_wq.lora_down.weight": { dtype: "F32", shape: [r, k], data: new Uint8Array(down.buffer) },
+      "lora_unet_blocks_0_attn_wq.lora_up.weight": { dtype: "F32", shape: [n, r], data: new Uint8Array(up.buffer) },
+      "lora_unet_blocks_0_attn_wq.alpha": { dtype: "F32", shape: [], data: new Uint8Array(new Float32Array([alpha]).buffer) },
+    });
+    const st = await readHeader(model);
+    const lora = await matchLora(loraFile, await readHeader(loraFile), st);
+    const lin = await loadLinear(graph, model, st, "blocks.0.attn.wq", { file: loraFile, lora, strength });
+
+    const x = floats(m * k);
+    const got = new Float32Array(await graph.read(linear(graph, graph.buffer(x), lin, m), m * n * 4));
+    const want = reference(x, w.values, 1, down, up, (strength * alpha) / r, m, n, k, r);
+    expect(compare(got, want).relativeError).toBeLessThan(1e-6);
+
+    const off = await loadLinear(graph, model, st, "blocks.0.attn.wq", { file: loraFile, lora, strength: 0 });
+    expect(off.lora).toBeUndefined();
   } finally {
     graph.destroy();
   }

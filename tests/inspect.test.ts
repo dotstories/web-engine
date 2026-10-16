@@ -22,10 +22,11 @@ const krea = () =>
 describe("fp8Weights", () => {
   it("pairs each fp8 weight with its scale (ComfyUI fp8_scaled), either name", async () => {
     const pairs = fp8Weights(await krea());
-    expect(pairs.map((p) => [p.weight.name.split(".").slice(-4).join("."), p.scale?.name.split(".").pop() ?? null])).toEqual([
-      ["blocks.0.attn.qkv.weight", "scale_weight"],
-      ["blocks.1.attn.qkv.weight", "weight_scale"],
-      ["model.diffusion_model.final.weight", null],
+    const short = (name?: string) => name?.replace("model.diffusion_model.", "") ?? null;
+    expect(pairs.map((p) => [short(p.weight.name), short(p.scale?.name)])).toEqual([
+      ["blocks.0.attn.qkv.weight", "blocks.0.attn.qkv.scale_weight"],
+      ["blocks.1.attn.qkv.weight", "blocks.1.attn.qkv.weight_scale"],
+      ["final.weight", null],
     ]);
   });
 

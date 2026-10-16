@@ -11,7 +11,7 @@ import {
 } from "../kernels/elementwise";
 import { matmulBf16Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
 import { rmsnormParams, rmsnormWgsl, rmsnormWorkgroups } from "../kernels/rmsnorm";
-import { ropeWgsl, ropeWorkgroups } from "../kernels/rope";
+import { ropeKernel, ropeWorkgroups, type Pairing } from "../kernels/rope";
 
 /** The kernels as graph steps: each takes GPU buffers, queues one dispatch and returns its output buffer. */
 
@@ -44,9 +44,9 @@ export const noMod = (graph: Graph, d: number): Mod => ({ scale: graph.buffer(d 
 
 export type Rope = { cos: GPUBuffer; sin: GPUBuffer; pairs: number; tokens: number };
 
-export function rotate(graph: Graph, x: GPUBuffer, heads: number, rope: Rope): GPUBuffer {
+export function rotate(graph: Graph, x: GPUBuffer, heads: number, rope: Rope, pairing: Pairing = "interleaved"): GPUBuffer {
   const out = graph.buffer(rope.tokens * heads * rope.pairs * 2 * 4);
-  graph.run(ropeWgsl, [graph.buffer(new Uint32Array([rope.tokens, heads, rope.pairs])), x, rope.cos, rope.sin, out], ropeWorkgroups(rope.tokens, rope.pairs));
+  graph.run(ropeKernel(pairing), [graph.buffer(new Uint32Array([rope.tokens, heads, rope.pairs])), x, rope.cos, rope.sin, out], ropeWorkgroups(rope.tokens, rope.pairs));
   return out;
 }
 

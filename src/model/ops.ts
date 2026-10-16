@@ -1,36 +1,45 @@
-import type { Graph } from "../gpu/graph";
-import { elementwiseWorkgroups, gatedAddWgsl, sigmoidGateWgsl, swigluWgsl } from "../kernels/elementwise";
-import { matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
+import type { Binding, Graph } from "../gpu/graph";
+import {
+  addBiasWgsl,
+  addWgsl,
+  elementwiseWorkgroups,
+  gatedAddWgsl,
+  geluTanhWgsl,
+  sigmoidGateWgsl,
+  swigluWgsl,
+} from "../kernels/elementwise";
+import { matmulBf16Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
 import { rmsnormParams, rmsnormWgsl, rmsnormWorkgroups } from "../kernels/rmsnorm";
 import { ropeWgsl, ropeWorkgroups } from "../kernels/rope";
 
 /** The kernels as graph steps: each takes GPU buffers, queues one dispatch and returns its output buffer. */
 
-/** An fp8 linear layer from the model file: W [n, k] packed 4 per u32, real value = fp8 × scale. */
-export type Linear = { buffer: GPUBuffer; scale: number; n: number; k: number };
+/**
+ * A linear layer from the model file: W [n, k] as stored (fp8 packed 4 per u32 with a scalar
+ * weight_scale, or bf16 packed 2 per u32), and an optional f32 bias [n].
+ */
+export type Linear = { buffer: GPUBuffer; dtype: "fp8" | "bf16"; scale: number; n: number; k: number; bias?: GPUBuffer };
 
-/** y[m, n] = x[m, k] · Wᵀ */
+/** y[m, n] = x[m, k] · Wᵀ (+ bias) */
 export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuffer {
   const shape = { m, n: w.n, k: w.k };
   const y = graph.buffer(m * w.n * 4);
-  graph.run(matmulFp8Wgsl, [graph.buffer(matmulParams(shape, w.scale)), x, w.buffer, y], matmulWorkgroups(shape));
-  return y;
+  const code = w.dtype === "fp8" ? matmulFp8Wgsl : matmulBf16Wgsl;
+  graph.run(code, [graph.buffer(matmulParams(shape, w.scale)), x, w.buffer, y], matmulWorkgroups(shape));
+  return w.bias ? elementwise(graph, addBiasWgsl, [y, w.bias], m * w.n, w.n) : y;
 }
 
+export type Mod = { scale: Binding; shift: Binding };
+
 /** Zero-centered RMSNorm per row of length d, then (1 + scale) · … + shift. */
-export function norm(
-  graph: Graph,
-  x: GPUBuffer,
-  weight: GPUBuffer,
-  rows: number,
-  d: number,
-  mod: { scale: GPUBuffer; shift: GPUBuffer },
-  eps = 1e-5,
-): GPUBuffer {
+export function norm(graph: Graph, x: GPUBuffer, weight: GPUBuffer, rows: number, d: number, mod: Mod, eps = 1e-5): GPUBuffer {
   const out = graph.buffer(rows * d * 4);
   graph.run(rmsnormWgsl, [graph.buffer(rmsnormParams(rows, d, eps, 1)), x, weight, mod.scale, mod.shift, out], rmsnormWorkgroups(rows));
   return out;
 }
+
+/** No modulation: zero scale and shift of length d. */
+export const noMod = (graph: Graph, d: number): Mod => ({ scale: graph.buffer(d * 4), shift: graph.buffer(d * 4) });
 
 export type Rope = { cos: GPUBuffer; sin: GPUBuffer; pairs: number; tokens: number };
 
@@ -40,7 +49,7 @@ export function rotate(graph: Graph, x: GPUBuffer, heads: number, rope: Rope): G
   return out;
 }
 
-function elementwise(graph: Graph, code: string, inputs: GPUBuffer[], n: number, d = 1): GPUBuffer {
+function elementwise(graph: Graph, code: string, inputs: Binding[], n: number, d = 1): GPUBuffer {
   const out = graph.buffer(n * 4);
   graph.run(code, [graph.buffer(new Uint32Array([n, d])), ...inputs, out], elementwiseWorkgroups(n));
   return out;
@@ -51,5 +60,9 @@ export const swiglu = (graph: Graph, gate: GPUBuffer, up: GPUBuffer, n: number) 
 /** a · sigmoid(gate) */
 export const sigmoidGate = (graph: Graph, a: GPUBuffer, gate: GPUBuffer, n: number) => elementwise(graph, sigmoidGateWgsl, [a, gate], n);
 /** x + g[column] · h, with g of length d */
-export const gatedAdd = (graph: Graph, x: GPUBuffer, h: GPUBuffer, g: GPUBuffer, n: number, d: number) =>
+export const gatedAdd = (graph: Graph, x: GPUBuffer, h: GPUBuffer, g: Binding, n: number, d: number) =>
   elementwise(graph, gatedAddWgsl, [x, h, g], n, d);
+/** x + h */
+export const add = (graph: Graph, x: Binding, h: Binding, n: number) => elementwise(graph, addWgsl, [x, h], n);
+/** GELU, tanh form */
+export const gelu = (graph: Graph, x: GPUBuffer, n: number) => elementwise(graph, geluTanhWgsl, [x], n);

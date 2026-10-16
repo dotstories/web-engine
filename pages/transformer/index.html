@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Transformer check · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; margin: 0.5rem 0; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ccc; }
+      pre { background: #f4f4f4; padding: 1rem; overflow: auto; font-size: 13px; }
+      button { font: inherit; padding: 0.4rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Does the Krea 2 transformer match ComfyUI?</h1>
+      <p>Runs Krea 2 with the same number of blocks as the reference (from <code>tools/reference/transformer.py</code>,
+        ComfyUI's code) and compares every step: time, text fusion, image input, blocks and the final layer.</p>
+      <label>Model file <input id="model" type="file" accept=".safetensors" /></label>
+      <label>Reference file <input id="reference" type="file" accept=".safetensors" /></label>
+      <button id="run" type="button">Run transformer</button>
+      <p id="status" role="status"></p>
+      <table id="results" hidden>
+        <thead><tr><th>Step</th><th>Cosine</th><th>Relative error</th><th>Result</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="report" hidden>
+        <h2>Report</h2>
+        <button id="copy" type="button">Copy report</button>
+        <pre></pre>
+      </div>
+      <p><small id="build"></small></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

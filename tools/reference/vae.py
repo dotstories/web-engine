@@ -35,7 +35,12 @@ def main():
     z_dim = state["conv2.weight"].shape[0]
     print(f"dim {dim}, z_dim {z_dim}, {len(state)} tensors")
 
-    vae = WanVAE(dim=dim, z_dim=z_dim).eval()
+    # Which up stages have a temporal conv differs between VAEs (Qwen-Image: the first two, Wan 2.1: the last two).
+    # It doesn't change a single image (those convs are skipped for one frame), but loading needs the right layout.
+    resamples = sorted({int(k.split(".")[2]) for k in state if k.startswith("decoder.upsamples.") and ".resample." in k})
+    upsample = [f"decoder.upsamples.{i}.time_conv.weight" in state for i in resamples]
+    print(f"temporal upsample per stage: {upsample}")
+    vae = WanVAE(dim=dim, z_dim=z_dim, temperal_downsample=upsample[::-1]).eval()
     vae.load_state_dict(state, strict=True)
 
     saved = {}

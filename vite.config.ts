@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+/// <reference types="@vitest/browser/providers/playwright" />
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import { webgpuFlags } from "./chrome-webgpu";

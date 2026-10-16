@@ -5,7 +5,10 @@ export const KREA2_FILES = {
   vae: { folder: "vae", names: ["qwen_image_vae.safetensors"] },
 } as const;
 
-export type ModelFiles = { transformer: File; textEncoder: File; vae: File };
+/** Optional: the Dark Fantasy Kit's LoRA (Comfy-Org/Krea-2 loras/), used at strength 0.8 there. */
+export const KREA2_LORA = { folder: "loras", name: "krea2_darkbrush.safetensors" } as const;
+
+export type ModelFiles = { transformer: File; textEncoder: File; vae: File; lora?: File };
 export type Part = keyof typeof KREA2_FILES;
 
 /** A folder handle as far as we need it (File System Access API), so tests can pass a fake. */
@@ -22,6 +25,7 @@ async function tryFolder(folder: Folder, name: string): Promise<Folder | null> {
 /**
  * Finds the three files in the picked folder: a ComfyUI "models" folder, or a folder that contains one
  * (e.g. ComfyUI itself, or Comfy Desktop's "ComfyUI-Shared"). Returns what it found and what is missing.
+ * The LoRA is optional: found when present, never "missing".
  */
 export async function findModelFiles(picked: Folder): Promise<{ files: Partial<ModelFiles>; missing: string[] }> {
   const models = picked.name === "models" ? picked : ((await tryFolder(picked, "models")) ?? picked);
@@ -37,5 +41,8 @@ export async function findModelFiles(picked: Folder): Promise<{ files: Partial<M
     if (found) files[part] = found;
     else missing.push(`${folder}/${names[0]}`);
   }
+  const loras = await tryFolder(models, KREA2_LORA.folder);
+  const lora = loras ? await loras.getFileHandle(KREA2_LORA.name).then((h) => h.getFile()).catch(() => null) : null;
+  if (lora) files.lora = lora;
   return { files, missing };
 }

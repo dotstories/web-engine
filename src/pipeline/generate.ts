@@ -7,10 +7,12 @@ import { decode, loadVae, toRgba, vaeInput } from "../model/vae";
 import { loadTransformer } from "../model/weights";
 import { kreaPrompt } from "../text/prompt";
 import type { Qwen2Tokenizer } from "../text/tokenizer";
+import { matchLora } from "../weights/lora";
 import { readHeader } from "../weights/safetensors";
 import type { ModelFiles } from "./files";
 
-export type Request = { prompt: string; width: number; height: number; seed: number };
+/** loraStrength: ComfyUI's strength_model for files.lora (0 or no file = no LoRA). */
+export type Request = { prompt: string; width: number; height: number; seed: number; loraStrength?: number };
 export type Progress = { stage: "text" | "steps" | "decode"; message: string; fraction: number };
 
 /**
@@ -45,11 +47,21 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
 
   // 2. Transformer: 8 Turbo steps
   let latent = gaussian(LATENT_CHANNELS * lh * lw, req.seed);
+  let loraLayers = 0;
   await timed("steps", async () => {
     const graph = new Graph(device);
     try {
-      const w = await loadTransformer(graph, files.transformer, await readHeader(files.transformer), 28, (d, t) =>
-        onProgress({ stage: "steps", message: `Loading the image model (${d}/${t})…`, fraction: 0.1 + (0.2 * d) / t }),
+      const st = await readHeader(files.transformer);
+      const strength = req.loraStrength ?? 0;
+      const lora = files.lora && strength ? { file: files.lora, lora: await matchLora(files.lora, await readHeader(files.lora), st), strength } : undefined;
+      loraLayers = lora?.lora.targets.size ?? 0;
+      const w = await loadTransformer(
+        graph,
+        files.transformer,
+        st,
+        28,
+        (d, t) => onProgress({ stage: "steps", message: `Loading the image model (${d}/${t})…`, fraction: 0.1 + (0.2 * d) / t }),
+        lora,
       );
       const textCache = text(graph, w, graph.buffer(cond), kept).out;
       const schedule = sigmas();
@@ -82,5 +94,5 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
   });
 
   onProgress({ stage: "decode", message: "Done", fraction: 1 });
-  return { rgba, width: req.width, height: req.height, times };
+  return { rgba, width: req.width, height: req.height, times, loraLayers };
 }

@@ -24,6 +24,12 @@ $("#pick").addEventListener("click", async () => {
     files = found.files as ModelFiles;
     const gb = (f: File) => (f.size / 1024 ** 3).toFixed(1);
     status.textContent = `✅ Found all 3 files (${gb(files.transformer)} + ${gb(files.textEncoder)} + ${gb(files.vae)} GB).`;
+    const lora = $<HTMLSelectElement>("#lora");
+    lora.querySelector("option[value=darkbrush]")?.remove();
+    if (files.lora) {
+      lora.add(new Option(`${files.lora.name} (Dark Fantasy Kit)`, "darkbrush", true, true));
+      status.textContent += ` LoRA found: ${files.lora.name}.`;
+    }
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") return; // closed the picker
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;
@@ -41,7 +47,14 @@ $("#generate").addEventListener("click", async () => {
     return;
   }
   const size = Number($<HTMLSelectElement>("#size").value);
-  const request = { prompt: $<HTMLTextAreaElement>("#prompt").value.trim(), width: size, height: size, seed: Number($<HTMLInputElement>("#seed").value) >>> 0 };
+  const strength = $<HTMLSelectElement>("#lora").value ? Number($<HTMLInputElement>("#strength").value) : 0;
+  const request = {
+    prompt: $<HTMLTextAreaElement>("#prompt").value.trim(),
+    width: size,
+    height: size,
+    seed: Number($<HTMLInputElement>("#seed").value) >>> 0,
+    loraStrength: Number.isFinite(strength) ? strength : 0,
+  };
   if (!request.prompt) {
     status.textContent = "Write a prompt first.";
     return;
@@ -53,7 +66,7 @@ $("#generate").addEventListener("click", async () => {
   const start = performance.now();
   try {
     const tokenizer = await Qwen2Tokenizer.load(tokenizerFile("vocab.json"), tokenizerFile("merges.txt"));
-    const { rgba, width, height, times } = await generate(files, tokenizer, request, (p) => {
+    const { rgba, width, height, times, loraLayers } = await generate(files, tokenizer, request, (p) => {
       status.textContent = p.message;
       progress.value = p.fraction;
     });
@@ -68,7 +81,8 @@ $("#generate").addEventListener("click", async () => {
     }, "image/png");
     const total = ((performance.now() - start) / 1000).toFixed(0);
     status.textContent = `✅ Done in ${total} s.`;
-    $("#times").textContent = `text ${times.text} s · 8 steps ${times.steps} s · decode ${times.decode} s · build ${__BUILD__}`;
+    const loraText = loraLayers ? ` · LoRA ${request.loraStrength} on ${loraLayers} layers` : "";
+    $("#times").textContent = `text ${times.text} s · 8 steps ${times.steps} s · decode ${times.decode} s${loraText} · build ${__BUILD__}`;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;
   } finally {

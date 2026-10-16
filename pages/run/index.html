@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speed run · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; margin: 0.5rem 0; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ccc; }
+      pre { background: #f4f4f4; padding: 1rem; overflow: auto; font-size: 13px; }
+      button, select { font: inherit; padding: 0.4rem 1rem; }
+      progress { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>How long does one Krea 2 image take here?</h1>
+      <p>Loads all 28 blocks of your Krea 2 file onto the GPU (about 13 GB) and runs the 8 Turbo steps on random input
+        (text encoder and image decoder are not in the browser yet). Close other GPU-heavy apps first.</p>
+      <label>Model file <input id="model" type="file" accept=".safetensors" /></label>
+      <label>Image size
+        <select id="size">
+          <option value="512">512 × 512</option>
+          <option value="1024" selected>1024 × 1024</option>
+        </select>
+      </label>
+      <button id="run" type="button">Run 8 steps</button>
+      <p id="status" role="status"></p>
+      <progress id="progress" max="1" value="0" hidden></progress>
+      <table id="results" hidden><tbody></tbody></table>
+      <div id="report" hidden>
+        <h2>Report</h2>
+        <button id="copy" type="button">Copy report</button>
+        <pre></pre>
+      </div>
+      <p><small id="build"></small></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

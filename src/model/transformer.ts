@@ -107,7 +107,19 @@ export function text(graph: Graph, w: TransformerWeights, context: GPUBuffer, to
   return { fused, out };
 }
 
-export type Inputs = { latent: Float32Array; height: number; width: number; timestep: number; context: Float32Array; textTokens: number };
+/**
+ * `context`: text hidden states [tokens, 12 · 2560]. `textCache`: the text part from an earlier step of
+ * the same image (it doesn't depend on the timestep), so it runs once per image.
+ */
+export type Inputs = {
+  latent: Float32Array;
+  height: number;
+  width: number;
+  timestep: number;
+  context: Float32Array;
+  textTokens: number;
+  textCache?: GPUBuffer;
+};
 
 /**
  * One denoising step: predicted velocity for the latent, as [16, H, W].
@@ -121,9 +133,9 @@ export async function transformer(graph: Graph, w: TransformerWeights, input: In
   const steps: Record<string, GPUBuffer> = {};
 
   const { t, tvec } = time(graph, w, input.timestep);
-  const txt = text(graph, w, graph.buffer(input.context), L);
+  const txt = input.textCache ? { out: input.textCache } : text(graph, w, graph.buffer(input.context), L);
   const img = linear(graph, graph.buffer(patchify(input.latent, height, width)), w.first, image);
-  Object.assign(steps, { tmlp: t, tproj: tvec, txtfusion: txt.fused, txtmlp: txt.out, first: img });
+  Object.assign(steps, { tmlp: t, tproj: tvec, txtmlp: txt.out, first: img }, "fused" in txt ? { txtfusion: txt.fused } : {});
 
   let x = graph.buffer(tokens * hidden * 4);
   graph.copy(txt.out, 0, x, 0, L * hidden * 4);

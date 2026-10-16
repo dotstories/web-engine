@@ -79,7 +79,20 @@ export async function measureOpfsRead(bytes: number, chunk: number): Promise<num
   }
 }
 
-const tryOr = async <T>(f: () => Promise<T>): Promise<T | null> => f().catch(() => null);
+/** Runs a measurement; on failure keeps the reason in `errors[key]` and returns null. */
+export async function attempt<T>(errors: Record<string, string>, key: string, f: () => Promise<T>): Promise<T | null> {
+  try {
+    return await f();
+  } catch (e) {
+    errors[key] = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    return null;
+  }
+}
+
+/** Ask to keep our files: browsers then allow more storage and don't evict it. */
+export async function requestPersist(): Promise<boolean | null> {
+  return navigator.storage?.persist ? navigator.storage.persist() : null;
+}
 
 export async function runProbe(adapter: GPUAdapter | null, sizes: Sizes, step: (s: string) => void): Promise<Report> {
   const report: Report = {
@@ -96,18 +109,22 @@ export async function runProbe(adapter: GPUAdapter | null, sizes: Sizes, step: (
     quotaBytes: null,
     opfsReadBytesPerSec: null,
     uploadBytesPerSec: null,
+    persisted: null,
+    errors: {},
   };
+  const { errors } = report;
   if (adapter) {
     const device = await openDevice(adapter);
     step("GPU memory");
-    report.gpuMemoryBytes = await tryOr(() => measureGpuMemory(device, sizes.memoryStep, sizes.memoryCap));
+    report.gpuMemoryBytes = await attempt(errors, "memory", () => measureGpuMemory(device, sizes.memoryStep, sizes.memoryCap));
     step("GPU upload speed");
-    report.uploadBytesPerSec = await tryOr(() => measureUpload(device, sizes.upload));
+    report.uploadBytesPerSec = await attempt(errors, "upload", () => measureUpload(device, sizes.upload));
     device.destroy();
   }
   step("Browser storage");
-  report.quotaBytes = await tryOr(measureQuota);
+  report.persisted = await attempt(errors, "persist", requestPersist);
+  report.quotaBytes = await attempt(errors, "quota", measureQuota);
   step("Storage read speed");
-  report.opfsReadBytesPerSec = await tryOr(() => measureOpfsRead(sizes.opfs, sizes.chunk));
+  report.opfsReadBytesPerSec = await attempt(errors, "read", () => measureOpfsRead(sizes.opfs, sizes.chunk));
   return report;
 }

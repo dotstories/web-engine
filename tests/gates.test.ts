@@ -10,6 +10,8 @@ const good: Report = {
   quotaBytes: 500 * GB,
   opfsReadBytesPerSec: 3 * GB,
   uploadBytesPerSec: 10 * GB,
+  persisted: true,
+  errors: {},
 };
 
 const gate = (r: Report, id: string) => evaluate(r).find((g) => g.id === id)!;
@@ -52,6 +54,11 @@ describe("evaluate", () => {
   it("fails a gate it could not measure", () => {
     const g = gate({ ...good, gpuMemoryBytes: null }, "memory");
     expect(g).toMatchObject({ pass: false, value: "not measured" });
+  });
+
+  it("shows why a measurement failed", () => {
+    const g = gate({ ...good, opfsReadBytesPerSec: null, errors: { read: "NotAllowedError: denied" } }, "read");
+    expect(g).toMatchObject({ pass: false, value: "failed: NotAllowedError: denied" });
   });
 });
 

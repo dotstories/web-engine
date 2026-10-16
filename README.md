@@ -18,6 +18,10 @@ Part of [DotStories](https://dotstories.com), an open-source community for shari
 - A desktop browser with WebGPU (Chrome or Edge 113+).
 - A GPU with `shader-f16` support and enough memory (see the probe page).
 
+## Try it
+
+**[Can this computer run Krea 2?](https://dotstories.github.io/web-engine/pages/probe/)** Open the probe in Chrome or Edge and click Run.
+
 ## Run it locally
 
 ```bash

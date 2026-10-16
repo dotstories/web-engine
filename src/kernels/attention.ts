@@ -2,12 +2,15 @@ import { Graph } from "../gpu/graph";
 import { padTo4, softmaxWgsl, softmaxWorkgroups, transposeHeadsWgsl, transposeWorkgroups } from "./attention-parts";
 import { matmulF32Wgsl, matmulParams, matmulWorkgroups } from "./matmul";
 
-/** `chunk`: queries per pass (default all). Smaller chunks bound the score memory at tokens × chunk. */
-export type AttentionShape = { tokens: number; heads: number; kvHeads: number; dim: number; chunk?: number };
+/**
+ * `chunk`: queries per pass (default all). Smaller chunks bound the score memory at tokens × chunk.
+ * `causal`: each token only attends to itself and earlier tokens (LLMs such as the text encoder).
+ */
+export type AttentionShape = { tokens: number; heads: number; kvHeads: number; dim: number; chunk?: number; causal?: boolean };
 
 /**
  * Scaled dot-product attention with grouped-query heads, as in Krea 2 (48 query heads share
- * 12 key/value heads; query head h uses kv head ⌊h / (heads / kvHeads)⌋), no mask.
+ * 12 key/value heads; query head h uses kv head ⌊h / (heads / kvHeads)⌋), no mask or causal.
  * q: [tokens, heads, dim], k, v: [tokens, kvHeads, dim] → out: [tokens, heads, dim].
  *
  * Built from the matmul kernel, one head at a time:
@@ -36,7 +39,7 @@ export function attention(graph: Graph, q: GPUBuffer, k: GPUBuffer, v: GPUBuffer
       const qkLayout = { xStride: heads * dim, xOffset: q0 * heads * dim + h * dim, wStride: kvHeads * dim, wOffset: g * dim, yStride: stride };
       graph.run(matmulF32Wgsl, [graph.buffer(matmulParams(qk, 1 / Math.sqrt(dim), qkLayout)), q, k, scores], matmulWorkgroups(qk));
 
-      graph.run(softmaxWgsl, [graph.buffer(new Uint32Array([rows, tokens, stride])), scores, probs], softmaxWorkgroups(rows));
+      graph.run(softmaxWgsl, [graph.buffer(new Uint32Array([rows, tokens, stride, shape.causal ? 1 : 0, q0])), scores, probs], softmaxWorkgroups(rows));
 
       const pv = { m: rows, n: dim, k: stride };
       const pvLayout = { xStride: stride, wStride: stride, wOffset: g * dim * stride, yStride: heads * dim, yOffset: q0 * heads * dim + h * dim };

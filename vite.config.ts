@@ -7,7 +7,10 @@ export default defineConfig({
   base: "./",
   build: {
     rollupOptions: {
-      input: { index: resolve(import.meta.dirname, "index.html") },
+      input: {
+        index: resolve(import.meta.dirname, "index.html"),
+        probe: resolve(import.meta.dirname, "pages/probe/index.html"),
+      },
     },
   },
   test: {

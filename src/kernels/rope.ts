@@ -35,14 +35,34 @@ export function ropeTables(pos: number[][], axes = AXES, theta = THETA) {
   return { cos, sin, pairs };
 }
 
-/** x: [tokens, heads, 2 · pairs]. One thread per pair. */
-export const ropeWgsl = /* wgsl */ `
+/**
+ * x: [tokens, heads, 2 · pairs]. One thread per pair.
+ * "interleaved" pairs (2j, 2j + 1) as in Krea 2's blocks; "half" pairs (j, j + pairs) as in Qwen/Llama
+ * (rotate_half), used by the text encoder.
+ */
+export type Pairing = "interleaved" | "half";
+
+const rotate: Record<Pairing, string> = {
+  interleaved: /* wgsl */ `
+    let i = (token * p.heads + h) * p.pairs + pair;
+    let v = vec2<f32>(x[2u * i], x[2u * i + 1u]);
+    out[2u * i] = v.x * c - v.y * s;
+    out[2u * i + 1u] = v.y * c + v.x * s;`,
+  half: /* wgsl */ `
+    let base = (token * p.heads + h) * p.pairs * 2u;
+    let a = x[base + pair];
+    let b = x[base + pair + p.pairs];
+    out[base + pair] = a * c - b * s;
+    out[base + pair + p.pairs] = b * c + a * s;`,
+};
+
+export const ropeKernel = (pairing: Pairing) => /* wgsl */ `
 struct Params { tokens: u32, heads: u32, pairs: u32 }
 @group(0) @binding(0) var<storage, read> p: Params;
-@group(0) @binding(1) var<storage, read> x: array<vec2<f32>>;
+@group(0) @binding(1) var<storage, read> x: array<f32>;
 @group(0) @binding(2) var<storage, read> cosines: array<f32>;
 @group(0) @binding(3) var<storage, read> sines: array<f32>;
-@group(0) @binding(4) var<storage, read_write> out: array<vec2<f32>>;
+@group(0) @binding(4) var<storage, read_write> out: array<f32>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -51,13 +71,13 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   if (pair >= p.pairs || token >= p.tokens) { return; }
   let c = cosines[token * p.pairs + pair];
   let s = sines[token * p.pairs + pair];
-  for (var h = 0u; h < p.heads; h++) {
-    let i = (token * p.heads + h) * p.pairs + pair;
-    let v = x[i];
-    out[i] = vec2<f32>(v.x * c - v.y * s, v.y * c + v.x * s);
+  for (var h = 0u; h < p.heads; h++) {${rotate[pairing]}
   }
 }
 `;
+
+export const ropeWgsl = ropeKernel("interleaved");
+export const ropeHalfWgsl = ropeKernel("half");
 
 export const ropeWorkgroups = (tokens: number, pairs: number): [number, number, number] => [
   Math.ceil(pairs / 64),
@@ -66,11 +86,11 @@ export const ropeWorkgroups = (tokens: number, pairs: number): [number, number, 
 ];
 
 /** One-shot run (tests, debugging). */
-export async function rope(device: GPUDevice, x: Float32Array, heads: number, tables: ReturnType<typeof ropeTables>) {
+export async function rope(device: GPUDevice, x: Float32Array, heads: number, tables: ReturnType<typeof ropeTables>, pairing: Pairing = "interleaved") {
   const tokens = tables.cos.length / tables.pairs;
   if (x.length !== tokens * heads * tables.pairs * 2) throw new Error("x does not match tokens × heads × head dim");
   const [out] = await runCompute(device, {
-    code: ropeWgsl,
+    code: ropeKernel(pairing),
     inputs: [new Uint32Array([tokens, heads, tables.pairs]), x, tables.cos, tables.sin],
     outputs: [x.byteLength],
     workgroups: ropeWorkgroups(tokens, tables.pairs),

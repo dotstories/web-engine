@@ -6,14 +6,14 @@ import { attention, type AttentionShape } from "../../src/kernels/attention";
 let seed = 1;
 const random = (n: number, size = 2) => Float32Array.from({ length: n }, () => (((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1) * size);
 
-/** float64 reference: softmax(q·kᵀ/√d)·v per head, kv head = ⌊h / group⌋. */
-function reference(q: Float32Array, k: Float32Array, v: Float32Array, { tokens, heads, kvHeads, dim }: AttentionShape) {
+/** float64 reference: softmax(q·kᵀ/√d)·v per head, kv head = ⌊h / group⌋; causal: only keys j ≤ i. */
+function reference(q: Float32Array, k: Float32Array, v: Float32Array, { tokens, heads, kvHeads, dim, causal }: AttentionShape) {
   const out = new Float64Array(tokens * heads * dim);
   const group = heads / kvHeads;
   for (let h = 0; h < heads; h++) {
     const g = Math.floor(h / group);
     for (let i = 0; i < tokens; i++) {
-      const s = Array.from({ length: tokens }, (_, j) => {
+      const s = Array.from({ length: causal ? i + 1 : tokens }, (_, j) => {
         let dot = 0;
         for (let d = 0; d < dim; d++) dot += q[(i * heads + h) * dim + d] * k[(j * kvHeads + g) * dim + d];
         return dot / Math.sqrt(dim);
@@ -23,7 +23,7 @@ function reference(q: Float32Array, k: Float32Array, v: Float32Array, { tokens, 
       const sum = e.reduce((a, b) => a + b, 0);
       for (let d = 0; d < dim; d++) {
         let o = 0;
-        for (let j = 0; j < tokens; j++) o += (e[j] / sum) * v[(j * kvHeads + g) * dim + d];
+        for (let j = 0; j < e.length; j++) o += (e[j] / sum) * v[(j * kvHeads + g) * dim + d];
         out[(i * heads + h) * dim + d] = o;
       }
     }
@@ -72,6 +72,23 @@ describe("attention in query chunks", () => {
       expect(chunked.reduce((m, x, i) => Math.max(m, Math.abs(x - whole[i])), 0)).toBeLessThan(1e-6);
       const cpu = reference(q, k, v, shape);
       expect(chunked.reduce((m, x, i) => Math.max(m, Math.abs(x - cpu[i])), 0)).toBeLessThan(1e-5);
+    } finally {
+      graph.destroy();
+    }
+  });
+});
+
+describe("causal attention", () => {
+  it.each([undefined, 7])("only looks at earlier tokens (chunk %s)", async (chunk) => {
+    const shape = { tokens: 19, heads: 4, kvHeads: 1, dim: 128, causal: true, chunk };
+    const { tokens, heads, kvHeads, dim } = shape;
+    const [q, k, v] = [random(tokens * heads * dim), random(tokens * kvHeads * dim), random(tokens * kvHeads * dim)];
+    const graph = new Graph(await getDevice());
+    try {
+      const out = attention(graph, graph.buffer(q), graph.buffer(k), graph.buffer(v), shape);
+      const gpu = new Float32Array(await graph.read(out, tokens * heads * dim * 4));
+      const cpu = reference(q, k, v, shape);
+      expect(gpu.reduce((m, x, i) => Math.max(m, Math.abs(x - cpu[i])), 0)).toBeLessThan(1e-5);
     } finally {
       graph.destroy();
     }

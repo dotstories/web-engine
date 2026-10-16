@@ -108,3 +108,22 @@ export async function matchLora(file: Blob, lora: Safetensors, model: Safetensor
   const unused = [...lora.tensors.keys()].filter((key) => !used.has(key)).sort();
   return { targets, unused };
 }
+
+/**
+ * One LoRA matrix ready for the GPU: down [rank, k] (pad "rows") or up [n, rank] (pad "cols").
+ * The matmul needs rank to be a multiple of 4, so other ranks get zero rows / columns (as f32).
+ * bf16 stays bf16 (half the memory); F32 and F16 become f32.
+ */
+export function loraMatrix(dtype: string, bytes: Uint8Array, rows: number, cols: number, pad: "rows" | "cols") {
+  const rank = pad === "rows" ? rows : cols;
+  const padded = Math.ceil(rank / 4) * 4;
+  if (dtype === "BF16" && padded === rank) {
+    return { dtype: "bf16" as const, data: new Uint32Array(bytes.slice().buffer), rows, cols };
+  }
+  const values = toFloat32(dtype, bytes);
+  if (padded === rank) return { dtype: "f32" as const, data: values, rows, cols };
+  const [r, c] = pad === "rows" ? [padded, cols] : [rows, padded];
+  const out = new Float32Array(r * c);
+  for (let i = 0; i < rows; i++) out.set(values.subarray(i * cols, (i + 1) * cols), i * c);
+  return { dtype: "f32" as const, data: out, rows: r, cols: c };
+}

@@ -5,6 +5,17 @@
   "description": "Run large AI models in the browser with WebGPU",
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokenizers/*": "./public/tokenizers/*"
+  },
+  "files": [
+    "src",
+    "public/tokenizers",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
   "scripts": {
     "dev": "vite",
     "build": "vite build",

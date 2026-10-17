@@ -24,6 +24,25 @@ Part of [DotStories](https://dotstories.com), an open-source community for shari
 
 [Can this computer run Krea 2?](https://dotstories.github.io/web-engine/pages/probe/) Open the probe in Chrome or Edge and click Run.
 
+## Use it in an app
+
+The engine is plain TypeScript (`src/index.ts`), so your bundler compiles it. With Next.js:
+
+```bash
+pnpm add github:dotstories/web-engine#<commit>
+```
+
+```js
+// next.config.js
+export default { transpilePackages: ["@dotstories/web-engine"] };
+```
+
+```ts
+const { generate, findModelFiles, Qwen2Tokenizer } = await import("@dotstories/web-engine");
+```
+
+Serve the tokenizer files from `@dotstories/web-engine/tokenizers/qwen2/` (`vocab.json`, `merges.txt`) next to your app.
+
 ## Run it locally
 
 ```bash

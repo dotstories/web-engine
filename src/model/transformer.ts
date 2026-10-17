@@ -48,28 +48,34 @@ export function timestepEmbedding(timestep: number, dim = TIME_DIM): Float32Arra
   return out;
 }
 
-/** Latent [16, H, W] → tokens [(H/2)·(W/2), 64], features in (channel, row in patch, column in patch) order. */
+/** Token grid of a latent: 2×2 patches, odd sizes padded up (ComfyUI pad_to_patch_size). */
+export const patchGrid = (height: number, width: number) => ({ rows: Math.ceil(height / 2), cols: Math.ceil(width / 2) });
+
+/**
+ * Latent [16, H, W] → tokens [rows · cols, 64], features in (channel, row in patch, column in patch) order.
+ * Odd H or W is padded circularly (wraps to row/column 0), as ComfyUI does: the Kit's 1928 px is 241 columns.
+ */
 export function patchify(latent: Float32Array, height: number, width: number, channels = LATENT_CHANNELS): Float32Array<ArrayBuffer> {
-  const [rows, cols] = [height / 2, width / 2];
+  const { rows, cols } = patchGrid(height, width);
   const out = new Float32Array(rows * cols * channels * 4);
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++)
       for (let ch = 0; ch < channels; ch++)
         for (let pr = 0; pr < 2; pr++)
           for (let pc = 0; pc < 2; pc++)
-            out[(r * cols + c) * channels * 4 + ch * 4 + pr * 2 + pc] = latent[(ch * height + r * 2 + pr) * width + c * 2 + pc];
+            out[(r * cols + c) * channels * 4 + ch * 4 + pr * 2 + pc] = latent[(ch * height + ((r * 2 + pr) % height)) * width + ((c * 2 + pc) % width)];
   return out;
 }
 
-/** The inverse of patchify. */
+/** The inverse of patchify; the padding is cropped back off. */
 export function unpatchify(tokens: Float32Array, height: number, width: number, channels = LATENT_CHANNELS): Float32Array<ArrayBuffer> {
-  const [rows, cols] = [height / 2, width / 2];
+  const { rows, cols } = patchGrid(height, width);
   const out = new Float32Array(channels * height * width);
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++)
       for (let ch = 0; ch < channels; ch++)
-        for (let pr = 0; pr < 2; pr++)
-          for (let pc = 0; pc < 2; pc++)
+        for (let pr = 0; pr < 2 && r * 2 + pr < height; pr++)
+          for (let pc = 0; pc < 2 && c * 2 + pc < width; pc++)
             out[(ch * height + r * 2 + pr) * width + c * 2 + pc] = tokens[(r * cols + c) * channels * 4 + ch * 4 + pr * 2 + pc];
   return out;
 }
@@ -127,7 +133,8 @@ export type Inputs = {
  */
 export async function transformer(graph: Graph, w: TransformerWeights, input: Inputs, onBlock?: (i: number) => void, cfg = KREA_BLOCK) {
   const { height, width, textTokens: L } = input;
-  const image = (height / 2) * (width / 2);
+  const { rows, cols } = patchGrid(height, width);
+  const image = rows * cols;
   const tokens = L + image;
   const hidden = cfg.hidden;
   const steps: Record<string, GPUBuffer> = {};
@@ -141,7 +148,7 @@ export async function transformer(graph: Graph, w: TransformerWeights, input: In
   graph.copy(txt.out, 0, x, 0, L * hidden * 4);
   graph.copy(img, 0, x, L * hidden * 4, image * hidden * 4);
 
-  const tables = ropeTables(positions(L, height / 2, width / 2));
+  const tables = ropeTables(positions(L, rows, cols));
   const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
 
   for (const [i, b] of w.blocks.entries()) {

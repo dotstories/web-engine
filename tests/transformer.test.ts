@@ -31,4 +31,23 @@ describe("patchify", () => {
     const latent = Float32Array.from({ length: 16 * 8 * 8 }, (_, i) => Math.sin(i));
     expect(Array.from(unpatchify(patchify(latent, 8, 8), 8, 8))).toEqual(Array.from(latent));
   });
+
+  it("pads odd sizes circularly, like ComfyUI's pad_to_patch_size (1928 px wide → 241 latent columns)", () => {
+    const [h, w] = [3, 5];
+    const latent = Float32Array.from({ length: 16 * h * w }, (_, i) => i);
+    const tokens = patchify(latent, h, w);
+    expect(tokens.length).toBe(2 * 3 * 64);
+    // last token column, patch pixel (0, 1) is past the edge → wraps to latent column 0
+    expect(tokens[(0 * 3 + 2) * 64 + 5 * 4 + 0 * 2 + 1]).toBe(latent[(5 * h + 0) * w + 0]);
+    // last token row, patch pixel (1, 0) wraps to latent row 0
+    expect(tokens[(1 * 3 + 1) * 64 + 5 * 4 + 1 * 2 + 0]).toBe(latent[(5 * h + 0) * w + 2]);
+  });
+
+  it("unpatchify crops the padding back off", () => {
+    const [h, w] = [5, 7];
+    const latent = Float32Array.from({ length: 16 * h * w }, (_, i) => Math.cos(i));
+    const back = unpatchify(patchify(latent, h, w), h, w);
+    expect(back.length).toBe(16 * h * w);
+    expect(Array.from(back)).toEqual(Array.from(latent));
+  });
 });

@@ -21,6 +21,7 @@ export default defineConfig({
         vae: resolve(import.meta.dirname, "pages/vae/index.html"),
         text: resolve(import.meta.dirname, "pages/text/index.html"),
         generate: resolve(import.meta.dirname, "pages/generate/index.html"),
+        dot: resolve(import.meta.dirname, "pages/dot/index.html"),
       },
     },
   },

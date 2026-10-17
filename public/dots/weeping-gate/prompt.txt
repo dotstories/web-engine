@@ -1,0 +1,17 @@
+**Scene Description:**
+
+At the heart of a vast, ancient cave — cloaked in thick, rolling fog — stands a **giant pale stone hand**, perfectly vertical and centered. Its wrist rests at the bottom of the frame, palm open and facing the viewer, fingers fully extended upward toward the ceiling like a silent offering or invocation. The hand is carved from weathered, luminous stone — pale gray-white with subtle veining, as if forged from moonlit marble or forgotten temple granite — its surface smooth yet textured with age, erosion, and mystical residue.
+
+From the fingertips, a **single thin beam of violet energy** rises straight upward — slender, almost ethereal, piercing the gloom. It glows faintly, casting no harsh light but a soft, spectral illumination that dances slightly in the air, suggesting movement or latent power. The beam vanishes into the darkness above, leaving behind a trail of faint luminescence that seems to ripple with unseen force.
+
+The **floor around the wrist** is choked with heavy, slow-moving fog — dense, cold, and swirling — obscuring the ground and giving the impression of a forgotten altar or sacred threshold. The fog is not static; it drifts gently, catching the faint glow of the violet beam and reflecting it in ghostly halos.
+
+The **background** is an empty, dark void — symmetrical, uncluttered, and deeply atmospheric. No other objects distract from the hand. The space around it is vast and silent, emphasizing isolation and mystery. The composition is minimalist yet powerful — centered, balanced, with the hand as the sole focal point.
+
+---
+
+**World & Style:**
+
+This is **Lineage 2-inspired Korean MMORPG fantasy art**, rendered in a **high fantasy medieval world**. The environment suggests **ancient mystical ruins** — perhaps remnants of an elven or human civilization long fallen. In the distance, faint silhouettes of **ornate stone architecture** emerge: tall, slender spires, graceful flowing arches, and intricate carvings — all half-submerged in shadow and mist. These structures hint at a grand, forgotten empire, now reclaimed by nature and mystery.
+
+The **lighting** is cinematic and painterly — rendered in **Unreal Engine** with **soft volumetric lighting** and **subtle film grain**. The palette is dominated by **cold blue-gray and deep violet tones**, evoking a dark overcast dusk. A few **faint golden lights** peek through the fog — perhaps

@@ -11,8 +11,10 @@ import { fp8Wgsl } from "./fp8";
  * Within a row, k is contiguous.
  *
  * Tiles: 128×128 outputs per workgroup (16×16 threads × 8×8 each), K in steps of 16.
- * x and W are read 4 values at a time; W is decoded once per tile into workgroup memory,
- * stored k-major so each thread reads 8 neighbours per step.
+ * x and W are read 4 values at a time; W is decoded once per tile into workgroup memory (vec4, k-major).
+ * Each thread owns rows ty·4 + (0..3) and 64 + ty·4 + (0..3), same for columns with tx, so a K step reads
+ * 4 vec4s from workgroup memory without bank conflicts (v3 read 16 scalars, 4-way conflicts on W).
+ * The next K step's global reads are issued before this step's math (register double buffering).
  *
  * The inner code is generated fully unrolled with named variables: arrays indexed in loops can
  * end up in slow memory instead of registers after WGSL is translated for the GPU driver.
@@ -36,38 +38,28 @@ export type Weights = "fp8" | "bf16" | "f32";
 const range = (n: number) => Array.from({ length: n }, (_, i) => i);
 const lines = (n: number, line: (i: number) => string) => range(n).map(line).join("\n");
 
-const loadW: Record<Weights, string> = {
+/** Global → registers: decoded W values for (col0 + r, k = 4·kq …) into `u` (zeros outside W). */
+const fetchW: Record<Weights, string> = {
   fp8: /* wgsl */ `
-    var word = 0u; // decodes to 0.0
-    if (col0 + r < p.n && kq < k4) { word = w[(p.w_offset + (col0 + r) * p.w_stride) / 4u + kq]; }
-    ws[at] = e4m3_to_f32(fp8_byte(word, 0u));
-    ws[at + TN] = e4m3_to_f32(fp8_byte(word, 1u));
-    ws[at + 2u * TN] = e4m3_to_f32(fp8_byte(word, 2u));
-    ws[at + 3u * TN] = e4m3_to_f32(fp8_byte(word, 3u));`,
+    if (col0 + r < p.n && kq < k4) {
+      let word = w[(p.w_offset + (col0 + r) * p.w_stride) / 4u + kq];
+      u = vec4<f32>(e4m3_to_f32(fp8_byte(word, 0u)), e4m3_to_f32(fp8_byte(word, 1u)), e4m3_to_f32(fp8_byte(word, 2u)), e4m3_to_f32(fp8_byte(word, 3u)));
+    }`,
   bf16: /* wgsl */ `
-    var lo = 0u; // two bf16 per word, first one in the low half; 0 decodes to 0.0
-    var hi = 0u;
     if (col0 + r < p.n && kq < k4) {
       let word = (p.w_offset + (col0 + r) * p.w_stride) / 2u + kq * 2u;
-      lo = w[word];
-      hi = w[word + 1u];
-    }
-    ws[at] = bitcast<f32>(lo << 16u);
-    ws[at + TN] = bitcast<f32>(lo & 0xffff0000u);
-    ws[at + 2u * TN] = bitcast<f32>(hi << 16u);
-    ws[at + 3u * TN] = bitcast<f32>(hi & 0xffff0000u);`,
+      let lo = w[word]; // two bf16 per word, first one in the low half
+      let hi = w[word + 1u];
+      u = vec4<f32>(bitcast<f32>(lo << 16u), bitcast<f32>(lo & 0xffff0000u), bitcast<f32>(hi << 16u), bitcast<f32>(hi & 0xffff0000u));
+    }`,
   f32: /* wgsl */ `
-    var u = vec4<f32>(0.0);
-    if (col0 + r < p.n && kq < k4) { u = w[(p.w_offset + (col0 + r) * p.w_stride) / 4u + kq]; }
-    ws[at] = u.x;
-    ws[at + TN] = u.y;
-    ws[at + 2u * TN] = u.z;
-    ws[at + 3u * TN] = u.w;`,
+    if (col0 + r < p.n && kq < k4) { u = w[(p.w_offset + (col0 + r) * p.w_stride) / 4u + kq]; }`,
 };
 
 export type Input = "rows" | "conv3x3";
 
-const loadX: Record<Input, string> = {
+/** Global → registers: x values for (row0 + r, k = 4·kq …) into `v` (zeros outside x). */
+const fetchX: Record<Input, string> = {
   rows: /* wgsl */ `
     if (row0 + r < p.m && kq < k4) { v = x[(p.x_offset + (row0 + r) * p.x_stride) / 4u + kq]; }`,
   conv3x3: /* wgsl */ `
@@ -82,22 +74,35 @@ const loadX: Record<Input, string> = {
     }`,
 };
 
-const load = (t: number, weights: Weights, input: Input) => /* wgsl */ `
+/**
+ * Each thread moves 2 × 4 x values and 2 × 4 W values per K step (t = 0, 1): element e = li + 256·t is
+ * row/column r = e / 4 and k quad q = e % 4.
+ */
+const fetch = (t: number, weights: Weights, input: Input) => /* wgsl */ `
   {
     let e = li + ${t * 256}u;
     let r = e / 4u;
-    let q = e % 4u;
-    let kq = k0 / 4u + q;
-    let at = 4u * q * TM + r;
-    var v = vec4<f32>(0.0);${loadX[input]}
-    xs[at] = v.x;
-    xs[at + TM] = v.y;
-    xs[at + 2u * TM] = v.z;
-    xs[at + 3u * TM] = v.w;
-${loadW[weights]}
+    let kq = kn / 4u + e % 4u;
+    var v = vec4<f32>(0.0);${fetchX[input]}
+    var u = vec4<f32>(0.0);${fetchW[weights]}
+    xv${t} = v;
+    wv${t} = u;
+  }`;
+
+/** Registers → workgroup memory, k-major: value (k, m) is xs[k · 32 + m / 4][m % 4]. */
+const store = (t: number) => /* wgsl */ `
+  {
+    let e = li + ${t * 256}u;
+    let r = e / 4u;
+    let at = 4u * (e % 4u) * 32u + r / 4u;
+    let c = r % 4u;
+${lines(4, (j) => `    xs[at + ${j * 32}u][c] = xv${t}.${"xyzw"[j]};\n    ws[at + ${j * 32}u][c] = wv${t}.${"xyzw"[j]};`)}
   }`;
 
 export type MatmulMode = { splitK?: boolean; accumulate?: boolean };
+
+/** Output rows of a thread: 4 at ty·4 and 4 at 64 + ty·4 (same for columns with tx), conflict-free reads. */
+const rowOf = (i: number) => (i < 4 ? `lid.y * 4u + ${i}u` : `64u + lid.y * 4u + ${i - 4}u`);
 
 export const matmulWgsl = (weights: Weights, input: Input = "rows", { splitK = false, accumulate = false }: MatmulMode = {}) => /* wgsl */ `
 ${weights === "fp8" ? fp8Wgsl : ""}
@@ -117,8 +122,8 @@ struct Params {
 const TM = 128u;
 const TN = 128u;
 const TK = 16u;
-var<workgroup> xs: array<f32, 2048>; // [TK][TM]
-var<workgroup> ws: array<f32, 2048>; // [TK][TN]
+var<workgroup> xs: array<vec4<f32>, 512>; // [TK][TM / 4]
+var<workgroup> ws: array<vec4<f32>, 512>; // [TK][TN / 4]
 ${splitK ? "var<private> z_rows = 0u; // rows before this workgroup's partial" : ""}
 
 fn store4(r: u32, c: u32, v: vec4<f32>) {
@@ -146,25 +151,40 @@ ${
 }
   let k4 = k_end / 4u;
 ${lines(16, (i) => `  var acc${i} = vec4<f32>(0.0);`)}
+  var xv0: vec4<f32>;
+  var xv1: vec4<f32>;
+  var wv0: vec4<f32>;
+  var wv1: vec4<f32>;
 
-  for (var k0 = k_begin; k0 < k_end; k0 += TK) {
-${load(0, weights, input)}
-${load(1, weights, input)}
+  // Software pipeline: the next K step's global reads are in flight while this step computes.
+  var k0 = k_begin;
+  if (k0 < k_end) {
+    let kn = k0;
+${fetch(0, weights, input)}
+${fetch(1, weights, input)}
+  }
+  for (; k0 < k_end; k0 += TK) {
+${store(0)}
+${store(1)}
     workgroupBarrier();
+    if (k0 + TK < k_end) {
+      let kn = k0 + TK;
+${fetch(0, weights, input)}
+${fetch(1, weights, input)}
+    }
 
     for (var kk = 0u; kk < TK; kk++) {
-      let xa = kk * TM + lid.y * 8u;
-      let wa = kk * TN + lid.x * 8u;
-${lines(8, (i) => `      let a${i} = xs[xa + ${i}u];`)}
-      let b0 = vec4<f32>(ws[wa], ws[wa + 1u], ws[wa + 2u], ws[wa + 3u]);
-      let b1 = vec4<f32>(ws[wa + 4u], ws[wa + 5u], ws[wa + 6u], ws[wa + 7u]);
-${lines(8, (i) => `      acc${2 * i} += a${i} * b0;\n      acc${2 * i + 1} += a${i} * b1;`)}
+      let a0 = xs[kk * 32u + lid.y];
+      let a1 = xs[kk * 32u + 16u + lid.y];
+      let b0 = ws[kk * 32u + lid.x];
+      let b1 = ws[kk * 32u + 16u + lid.x];
+${lines(8, (i) => `      acc${2 * i} += a${i >> 2}.${"xyzw"[i & 3]} * b0;\n      acc${2 * i + 1} += a${i >> 2}.${"xyzw"[i & 3]} * b1;`)}
     }
     workgroupBarrier();
   }
 
-  let c0 = col0 + lid.x * 8u;
-${lines(8, (i) => `  if (row0 + lid.y * 8u + ${i}u < p.m) { store4(row0 + lid.y * 8u + ${i}u, c0, acc${2 * i}); store4(row0 + lid.y * 8u + ${i}u, c0 + 4u, acc${2 * i + 1}); }`)}
+  let c0 = col0 + lid.x * 4u;
+${lines(8, (i) => `  if (row0 + ${rowOf(i)} < p.m) { store4(row0 + ${rowOf(i)}, c0, acc${2 * i}); store4(row0 + ${rowOf(i)}, c0 + 64u, acc${2 * i + 1}); }`)}
 }
 `;
 

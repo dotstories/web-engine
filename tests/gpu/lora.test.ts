@@ -116,3 +116,29 @@ it("loads a LoRA with the model weight (kohya names, alpha, rank 3 padded) and a
     graph.destroy();
   }
 });
+
+it("gives the same result when the LoRA down matmul is split over a long K", async () => {
+  const [m, n, k, r, s] = [5, 8, 1024, 4, 0.3]; // kSplitFor → 4 slices
+  const graph = new Graph(await getDevice());
+  try {
+    const x = floats(m * k);
+    const w = bf16(n * k);
+    const down = bf16(r * k);
+    const up = bf16(n * r);
+    const lin: Linear = {
+      buffer: graph.buffer(new Uint32Array(w.bytes.buffer)),
+      dtype: "bf16",
+      scale: 1,
+      n,
+      k,
+      lora: {
+        down: { buffer: graph.buffer(new Uint32Array(down.bytes.buffer)), dtype: "bf16", scale: 1, n: r, k },
+        up: { buffer: graph.buffer(new Uint32Array(up.bytes.buffer)), dtype: "bf16", scale: s, n, k: r },
+      },
+    };
+    const got = new Float32Array(await graph.read(linear(graph, graph.buffer(x), lin, m), m * n * 4));
+    expect(compare(got, reference(x, w.values, 1, down.values, up.values, s, m, n, k, r)).relativeError).toBeLessThan(1e-6);
+  } finally {
+    graph.destroy();
+  }
+});

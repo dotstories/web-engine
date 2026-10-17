@@ -21,6 +21,10 @@ import { fp8Wgsl } from "./fp8";
  * Input "conv3x3" turns it into a 3×3 convolution (padding 1) without an im2col copy: x is a
  * channel-last image [H·W, Cin], row m is a pixel, and K = 9 · Cin runs over (tap, channel), so the
  * loader gathers each pixel's 9 neighbours (zeros outside the image). W is [Cout, (ky, kx, Cin)].
+ *
+ * splitK: workgroup z sums only its slice of K (kSplit slices) into partial z of y [kSplit, M, yStride].
+ * For narrow outputs with a long K (a LoRA's x · downᵀ: N = rank), where 128×128 tiles alone
+ * would leave most of the GPU idle. Sum the partials afterwards (layerSum).
  */
 export const TILE = 128;
 
@@ -90,13 +94,14 @@ const load = (t: number, weights: Weights, input: Input) => /* wgsl */ `
 ${loadW[weights]}
   }`;
 
-export const matmulWgsl = (weights: Weights, input: Input = "rows") => /* wgsl */ `
+export const matmulWgsl = (weights: Weights, input: Input = "rows", splitK = false) => /* wgsl */ `
 ${weights === "fp8" ? fp8Wgsl : ""}
 struct Params {
   m: u32, n: u32, k: u32, scale: f32,
   x_stride: u32, w_stride: u32, y_stride: u32,
   x_offset: u32, w_offset: u32, y_offset: u32,
   width: u32, cin: u32, // conv3x3 only
+  k_split: u32, // splitK only
 }
 
 @group(0) @binding(0) var<storage, read> p: Params;
@@ -109,9 +114,10 @@ const TN = 128u;
 const TK = 16u;
 var<workgroup> xs: array<f32, 2048>; // [TK][TM]
 var<workgroup> ws: array<f32, 2048>; // [TK][TN]
+${splitK ? "var<private> z_rows = 0u; // rows before this workgroup's partial" : ""}
 
 fn store4(r: u32, c: u32, v: vec4<f32>) {
-  let o = p.y_offset + r * p.y_stride + c;
+  let o = p.y_offset + ${splitK ? "(z_rows + r)" : "r"} * p.y_stride + c;
   if (c < p.n) { y[o] = v.x * p.scale; }
   if (c + 1u < p.n) { y[o + 1u] = v.y * p.scale; }
   if (c + 2u < p.n) { y[o + 2u] = v.z * p.scale; }
@@ -123,10 +129,19 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec
         @builtin(local_invocation_index) li: u32) {
   let row0 = wg.y * TM;
   let col0 = wg.x * TN;
-  let k4 = p.k / 4u;
+${
+  splitK
+    ? `  let kc = ((p.k + p.k_split - 1u) / p.k_split + TK - 1u) / TK * TK;
+  let k_begin = wg.z * kc;
+  let k_end = min(p.k, k_begin + kc);
+  z_rows = wg.z * p.m;`
+    : `  let k_begin = 0u;
+  let k_end = p.k;`
+}
+  let k4 = k_end / 4u;
 ${lines(16, (i) => `  var acc${i} = vec4<f32>(0.0);`)}
 
-  for (var k0 = 0u; k0 < p.k; k0 += TK) {
+  for (var k0 = k_begin; k0 < k_end; k0 += TK) {
 ${load(0, weights, input)}
 ${load(1, weights, input)}
     workgroupBarrier();
@@ -153,8 +168,16 @@ export const matmulF32Wgsl = matmulWgsl("f32");
 export const conv3x3Wgsl = matmulWgsl("f32", "conv3x3");
 
 export type MatmulShape = { m: number; n: number; k: number };
-/** Row strides and offsets in values. Defaults: contiguous x [M, K], W [N, K], y [M, N]. */
-export type MatmulLayout = { xStride?: number; wStride?: number; yStride?: number; xOffset?: number; wOffset?: number; yOffset?: number };
+/** Row strides and offsets in values. Defaults: contiguous x [M, K], W [N, K], y [M, N]. kSplit: K slices (splitK kernels). */
+export type MatmulLayout = {
+  xStride?: number;
+  wStride?: number;
+  yStride?: number;
+  xOffset?: number;
+  wOffset?: number;
+  yOffset?: number;
+  kSplit?: number;
+};
 
 /** Params buffer for matmulWgsl. */
 export function matmulParams(
@@ -163,12 +186,12 @@ export function matmulParams(
   layout: MatmulLayout = {},
   conv?: { width: number; cin: number },
 ): Uint32Array<ArrayBuffer> {
-  const { xStride = k, wStride = k, yStride = n, xOffset = 0, wOffset = 0, yOffset = 0 } = layout;
+  const { xStride = k, wStride = k, yStride = n, xOffset = 0, wOffset = 0, yOffset = 0, kSplit = 1 } = layout;
   for (const [name, v] of Object.entries({ K: k, xStride, wStride, xOffset, wOffset })) {
     if (v % 4) throw new Error(`${name} must be a multiple of 4, got ${v}`);
   }
-  const params = new Uint32Array(12);
-  params.set([m, n, k, 0, xStride, wStride, yStride, xOffset, wOffset, yOffset, conv?.width ?? 0, conv?.cin ?? 0]);
+  const params = new Uint32Array(13);
+  params.set([m, n, k, 0, xStride, wStride, yStride, xOffset, wOffset, yOffset, conv?.width ?? 0, conv?.cin ?? 0, kSplit]);
   new Float32Array(params.buffer)[3] = scale;
   return params;
 }

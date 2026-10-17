@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffusersName, loraMatrix, matchLora } from "../src/weights/lora";
+import { describeLora, diffusersName, loraMatrix, matchLora } from "../src/weights/lora";
 import { readHeader } from "../src/weights/safetensors";
 import { makeSafetensors } from "./helpers";
 
@@ -143,5 +143,18 @@ describe("loraMatrix", () => {
     const m = loraMatrix("F16", half, 4, 1, "rows");
     expect(m.dtype).toBe("f32");
     expect(Array.from(m.data)).toEqual([1, -2, 0.5, 0]);
+  });
+});
+
+describe("describeLora", () => {
+  it("sums up layers, dtypes, ranks, bytes and unused keys", async () => {
+    const lora = await match({
+      "diffusion_model.blocks.0.attn.wq.lora_A.weight": t("BF16", [2, 4]),
+      "diffusion_model.blocks.0.attn.wq.lora_B.weight": t("BF16", [8, 2]),
+      "diffusion_model.blocks.0.mlp.down.lora_A.weight": t("F32", [4, 6]),
+      "diffusion_model.blocks.0.mlp.down.lora_B.weight": t("F32", [4, 4]),
+      "diffusion_model.something.else": t("F32", [1]),
+    });
+    expect(describeLora(lora)).toEqual({ layers: 2, dtypes: ["BF16", "F32"], ranks: [2, 4], bytes: 2 * (8 + 16) + 4 * (24 + 16), unused: 1 });
   });
 });

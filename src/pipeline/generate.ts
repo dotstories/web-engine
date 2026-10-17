@@ -7,7 +7,7 @@ import { decode, loadVae, toRgba, vaeInput } from "../model/vae";
 import { loadTransformer } from "../model/weights";
 import { kreaPrompt } from "../text/prompt";
 import type { Qwen2Tokenizer } from "../text/tokenizer";
-import { matchLora } from "../weights/lora";
+import { describeLora, matchLora } from "../weights/lora";
 import { readHeader } from "../weights/safetensors";
 import type { ModelFiles } from "./files";
 
@@ -47,25 +47,30 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
 
   // 2. Transformer: 8 Turbo steps
   let latent = gaussian(LATENT_CHANNELS * lh * lw, req.seed);
-  let loraLayers = 0;
-  await timed("steps", async () => {
+  let lora: ReturnType<typeof describeLora> | undefined;
+  const stepTimes: number[] = [];
+  await timed("model", async () => {
     const graph = new Graph(device);
     try {
       const st = await readHeader(files.transformer);
       const strength = req.loraStrength ?? 0;
-      const lora = files.lora && strength ? { file: files.lora, lora: await matchLora(files.lora, await readHeader(files.lora), st), strength } : undefined;
-      loraLayers = lora?.lora.targets.size ?? 0;
+      const loraWeights = files.lora && strength ? { file: files.lora, lora: await matchLora(files.lora, await readHeader(files.lora), st), strength } : undefined;
+      lora = loraWeights && describeLora(loraWeights.lora);
+      const loadStart = performance.now();
       const w = await loadTransformer(
         graph,
         files.transformer,
         st,
         28,
         (d, t) => onProgress({ stage: "steps", message: `Loading the image model (${d}/${t})…`, fraction: 0.1 + (0.2 * d) / t }),
-        lora,
+        loraWeights,
       );
+      await device.queue.onSubmittedWorkDone();
+      times.load = +((performance.now() - loadStart) / 1000).toFixed(1);
       const textCache = text(graph, w, graph.buffer(cond), kept).out;
       const schedule = sigmas();
       for (let i = 0; i < schedule.length - 1; i++) {
+        const stepStart = performance.now();
         const mark = graph.mark();
         const input = { latent, height: lh, width: lw, timestep: schedule[i], context: cond, textTokens: kept, textCache };
         const { velocity } = await transformer(graph, w, input, (b) =>
@@ -73,6 +78,7 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
         );
         graph.release(mark);
         latent = eulerStep(latent, velocity, schedule[i], schedule[i + 1]);
+        stepTimes.push(+((performance.now() - stepStart) / 1000).toFixed(2));
       }
     } finally {
       graph.destroy();
@@ -94,5 +100,6 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
   });
 
   onProgress({ stage: "decode", message: "Done", fraction: 1 });
-  return { rgba, width: req.width, height: req.height, times, loraLayers };
+  times.steps = +stepTimes.reduce((a, b) => a + b, 0).toFixed(1);
+  return { rgba, width: req.width, height: req.height, times, stepTimes, lora };
 }

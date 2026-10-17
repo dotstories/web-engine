@@ -138,3 +138,16 @@ export function mergeLora<T extends Float32Array>(weight: T, n: number, k: numbe
     }
   return weight;
 }
+
+/** What a matched LoRA holds, for the page: layers, dtypes and ranks in the file, bytes of its matrices, unused keys. */
+export function describeLora(lora: Lora) {
+  const targets = [...lora.targets.values()];
+  const unique = <T>(values: T[]) => [...new Set(values)].sort();
+  return {
+    layers: targets.length,
+    dtypes: unique(targets.flatMap((t) => [t.down.dtype, t.up.dtype])),
+    ranks: unique(targets.map((t) => t.rank)).sort((a, b) => a - b),
+    bytes: targets.reduce((sum, t) => sum + t.down.size + t.up.size, 0),
+    unused: lora.unused.length,
+  };
+}

@@ -1,3 +1,4 @@
+import { KREA2_ATTENTION, timeAttention } from "../../src/bench/attention";
 import { BLOCK_MATMULS, estimateImage, tokensFor } from "../../src/bench/estimate";
 import { timeMatmul } from "../../src/bench/matmul";
 import { peakSupported, timePeak, type PeakKind } from "../../src/bench/peak";
@@ -48,10 +49,20 @@ $("#run").addEventListener("click", async () => {
       }),
     );
     $("#results").hidden = false;
+    status.textContent = "Timing: attention at 1928×1088…";
+    const attention = await timeAttention(device, quick ? { tokens: 70, heads: 4, kvHeads: 2, dim: 16 } : KREA2_ATTENTION);
+    $("#attention tbody").replaceChildren(
+      ...attention.map((a) => {
+        const row = document.createElement("tr");
+        for (const text of [a.name, a.ms.toFixed(1), a.tflops?.toFixed(1) ?? ""]) row.insertCell().textContent = text;
+        return row;
+      }),
+    );
+    $("#attention").hidden = false;
     const f32Peak = peaks.find((p) => p.kind === "f32")?.tflops ?? 0;
     const share = f32Peak ? ` The matmul reaches ${Math.round((100 * estimate.tflops) / f32Peak)}% of the f32 peak.` : "";
     status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).${share}`;
-    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, userAgent: navigator.userAgent }, null, 2);
+    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, attention, userAgent: navigator.userAgent }, null, 2);
     $("#report").hidden = false;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;

@@ -1,4 +1,5 @@
 import type { Graph } from "../gpu/graph";
+import { runAhead } from "../gpu/run-ahead";
 import { attention } from "../kernels/attention";
 import { positions, ropeTables } from "../kernels/rope";
 import { layerSumWgsl, layerSumWorkgroups, shortAttentionParams, shortAttentionWgsl, shortAttentionWorkgroups } from "../kernels/text";
@@ -151,15 +152,18 @@ export async function transformer(graph: Graph, w: TransformerWeights, input: In
   const tables = ropeTables(positions(L, rows, cols));
   const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
 
-  for (const [i, b] of w.blocks.entries()) {
-    const mark = graph.mark();
-    const next = block(graph, b, cfg, x, tvec, rope);
-    graph.release(mark, [next]); // free this block's temporaries
-    graph.free(x); // the previous block's input/output is no longer needed
-    x = next;
-    onBlock?.(i);
-    await graph.device.queue.onSubmittedWorkDone(); // keeps memory bounded and progress honest
-  }
+  await runAhead(
+    w.blocks.length,
+    (i) => {
+      const mark = graph.mark();
+      const next = block(graph, w.blocks[i], cfg, x, tvec, rope);
+      graph.release(mark, [next]); // free this block's temporaries (submits the block)
+      graph.free(x); // the previous block's input/output is no longer needed
+      x = next;
+    },
+    () => graph.device.queue.onSubmittedWorkDone(), // the GPU never waits for the CPU; memory stays bounded
+    (i) => onBlock?.(i),
+  );
   steps.blocks = x;
 
   const scale = add(graph, t, w.lastScale, hidden);

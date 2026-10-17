@@ -18,7 +18,7 @@ function reachable(file: string, seen = new Set<string>()): Set<string> {
 
 describe("public API (src/index.ts)", () => {
   it("exports what an app needs to make an image", () => {
-    for (const name of ["generate", "abortable", "findModelFiles", "KREA2_FILES", "resolution", "IMAGE_SIZES", "Qwen2Tokenizer", "checkWebGPU", "torchRandn"]) {
+    for (const name of ["generate", "abortable", "findModelFiles", "KREA2_FILES", "resolution", "IMAGE_SIZES", "Qwen2Tokenizer", "checkWebGPU", "torchRandn", "downloadModels", "downloadsFor"]) {
       expect(engine, name).toHaveProperty(name);
     }
   });

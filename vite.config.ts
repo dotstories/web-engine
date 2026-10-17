@@ -34,6 +34,8 @@ export default defineConfig({
         test: {
           name: "gpu",
           include: ["tests/gpu/**/*.test.ts"],
+          // CI has no GPU: Chrome runs WebGPU on SwiftShader (the CPU), where the bigger kernels take 10-20 s.
+          testTimeout: 60_000,
           browser: {
             enabled: true,
             provider: "playwright",

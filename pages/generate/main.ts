@@ -66,7 +66,7 @@ $("#generate").addEventListener("click", async () => {
   const start = performance.now();
   try {
     const tokenizer = await Qwen2Tokenizer.load(tokenizerFile("vocab.json"), tokenizerFile("merges.txt"));
-    const { rgba, width, height, times, loraLayers } = await generate(files, tokenizer, request, (p) => {
+    const { rgba, width, height, times, stepTimes, lora } = await generate(files, tokenizer, request, (p) => {
       status.textContent = p.message;
       progress.value = p.fraction;
     });
@@ -81,8 +81,12 @@ $("#generate").addEventListener("click", async () => {
     }, "image/png");
     const total = ((performance.now() - start) / 1000).toFixed(0);
     status.textContent = `✅ Done in ${total} s.`;
-    const loraText = loraLayers ? ` · LoRA ${request.loraStrength} on ${loraLayers} layers` : "";
-    $("#times").textContent = `text ${times.text} s · 8 steps ${times.steps} s · decode ${times.decode} s${loraText} · build ${__BUILD__}`;
+    const mb = (bytes: number) => Math.round(bytes / 1024 ** 2);
+    const loraText = lora
+      ? ` · LoRA ${request.loraStrength} on ${lora.layers} layers (${lora.dtypes.join("/")}, rank ${lora.ranks.join("/")}, ${mb(lora.bytes)} MB, ${lora.unused} unused keys)`
+      : "";
+    $("#times").textContent =
+      `text ${times.text} s · load ${times.load} s · 8 steps ${times.steps} s (${stepTimes.join(", ")}) · decode ${times.decode} s${loraText} · build ${__BUILD__}`;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;
   } finally {

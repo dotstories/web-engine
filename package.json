@@ -21,7 +21,7 @@
     "@types/node": "^24",
     "@vitest/browser": "^3",
     "@webgpu/types": "^0.1",
-    "eslint": "^9",
+    "eslint": "^10",
     "globals": "^16",
     "playwright": "^1.63.0",
     "typescript": "^5",

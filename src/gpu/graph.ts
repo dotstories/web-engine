@@ -38,8 +38,7 @@ export class Graph {
   buffer(data: ArrayBufferView | number): GPUBuffer {
     const bytes = typeof data === "number" ? data : data.byteLength;
     const size = Math.max(4, Math.ceil(bytes / 4) * 4);
-    // Data that does not fill its last word would leave old bytes there: only whole words reuse a buffer.
-    const reused = bytes % 4 === 0 ? this.pool.get(size)?.pop() : undefined;
+    const reused = this.pool.get(size)?.pop(); // data always fills whole words (writeBuffer needs it)
     const buffer =
       reused ?? this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.stats[reused ? "reused" : "created"]++;

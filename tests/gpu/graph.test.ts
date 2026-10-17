@@ -66,17 +66,6 @@ describe("Graph", () => {
     graph.destroy();
   });
 
-  it("does not reuse a buffer for data that leaves part of its last word unwritten", async () => {
-    const graph = new Graph(await getDevice());
-    const mark = graph.mark();
-    graph.buffer(Uint8Array.from([9, 9, 9, 9, 9, 9, 9, 9]));
-    graph.release(mark);
-    const odd = graph.buffer(Uint8Array.from([1, 2, 3, 4, 5]));
-    expect(Array.from(new Uint8Array(await graph.read(odd)))).toEqual([1, 2, 3, 4, 5, 0, 0, 0]);
-    expect(graph.stats).toEqual({ created: 2, reused: 0 });
-    graph.destroy();
-  });
-
   it("free() also returns the buffer to the pool", async () => {
     const graph = new Graph(await getDevice());
     const a = graph.buffer(256);

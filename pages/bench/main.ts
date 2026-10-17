@@ -1,4 +1,5 @@
 import { KREA2_ATTENTION, timeAttention } from "../../src/bench/attention";
+import { KIT_SIZE, profileBlock } from "../../src/bench/block";
 import { BLOCK_MATMULS, estimateImage, tokensFor } from "../../src/bench/estimate";
 import { timeMatmul } from "../../src/bench/matmul";
 import { peakSupported, timePeak, type PeakKind } from "../../src/bench/peak";
@@ -59,10 +60,28 @@ $("#run").addEventListener("click", async () => {
       }),
     );
     $("#attention").hidden = false;
+    status.textContent = "Timing: one block at 1928×1088, op by op…";
+    const tiny = { hidden: 64, mlp: 96, heads: 4, kvHeads: 2, headDim: 16, eps: 1e-5 };
+    const block = quick ? await profileBlock(device, { textTokens: 3, rows: 2, columns: 3 }, tiny) : await profileBlock(device, KIT_SIZE);
+    const rows: [string, string, number][] = [
+      ...block.ops.map((o): [string, string, number] => [o.name, o.kind, o.ms]),
+      ["all linears", "sum", block.linear],
+      ["attention", "sum", block.attention],
+      ["everything else", "sum", block.other],
+      ["whole block, one submit", "total", block.block],
+    ];
+    $("#block tbody").replaceChildren(
+      ...rows.map(([name, kind, ms]) => {
+        const row = document.createElement("tr");
+        for (const text of [name, kind, ms.toFixed(1)]) row.insertCell().textContent = text;
+        return row;
+      }),
+    );
+    $("#block").hidden = false;
     const f32Peak = peaks.find((p) => p.kind === "f32")?.tflops ?? 0;
     const share = f32Peak ? ` The matmul reaches ${Math.round((100 * estimate.tflops) / f32Peak)}% of the f32 peak.` : "";
     status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).${share}`;
-    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, attention, userAgent: navigator.userAgent }, null, 2);
+    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, attention, block, userAgent: navigator.userAgent }, null, 2);
     $("#report").hidden = false;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;

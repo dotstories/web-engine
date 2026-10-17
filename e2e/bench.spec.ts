@@ -13,5 +13,7 @@ test("times the matmuls and estimates one image", async ({ page }) => {
   await expect(page.locator("#report pre")).toContainText('"attention"');
   await expect(page.locator("#block tbody tr")).toHaveCount(24); // 20 ops + 4 sums
   await expect(page.locator("#report pre")).toContainText('"block"');
+  await expect(page.locator("#tune tbody tr")).toHaveCount(8);
+  await expect(page.locator("#report pre")).toContainText('"tune"');
   await expect(page.getByText(/^Build \w+$/)).toBeVisible();
 });

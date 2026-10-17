@@ -26,3 +26,10 @@ it("profiles one block op by op and as a whole", async () => {
   for (const o of p.ops) expect(o.ms).toBeGreaterThan(0);
   expect(p.block).toBeGreaterThan(0);
 });
+
+it("times every tunable matmul layout", async () => {
+  const { tuneMatmul } = await import("../../src/bench/tune");
+  const results = await tuneMatmul(await getDevice(), [{ name: "tiny", m: 64, n: 128, k: 64 }], 1);
+  expect(results).toHaveLength(8);
+  for (const r of results) if (!r.skipped) expect(r.tflops[0]).toBeGreaterThan(0);
+});

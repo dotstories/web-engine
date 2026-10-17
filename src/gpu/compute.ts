@@ -12,6 +12,7 @@ export function getDevice(): Promise<GPUDevice> {
       requiredLimits: {
         maxBufferSize: adapter.limits.maxBufferSize,
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+        maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize,
       },
     });
   })();

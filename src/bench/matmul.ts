@@ -4,9 +4,14 @@ import { TILE, matmulFp8Wgsl, matmulParams, type MatmulShape } from "../kernels/
  * Average milliseconds per fp8 matmul of this shape on this GPU.
  * Buffers start zeroed and stay on the GPU: values don't change the speed, so nothing is uploaded.
  */
-export async function timeMatmul(device: GPUDevice, shape: MatmulShape, iterations = 5): Promise<number> {
+export async function timeMatmul(
+  device: GPUDevice,
+  shape: MatmulShape,
+  iterations = 5,
+  kernel: { code: string; workgroups: [number, number] } = { code: matmulFp8Wgsl, workgroups: [Math.ceil(shape.n / TILE), Math.ceil(shape.m / TILE)] },
+): Promise<number> {
   const { m, n, k } = shape;
-  const module = device.createShaderModule({ code: matmulFp8Wgsl });
+  const module = device.createShaderModule({ code: kernel.code });
   const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "main" } });
   const storage = (size: number) => device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   const params = matmulParams(shape, 1);
@@ -22,7 +27,7 @@ export async function timeMatmul(device: GPUDevice, shape: MatmulShape, iteratio
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
-    for (let i = 0; i < count; i++) pass.dispatchWorkgroups(Math.ceil(n / TILE), Math.ceil(m / TILE));
+    for (let i = 0; i < count; i++) pass.dispatchWorkgroups(...kernel.workgroups);
     pass.end();
     device.queue.submit([encoder.finish()]);
     await device.queue.onSubmittedWorkDone();

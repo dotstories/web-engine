@@ -114,7 +114,7 @@ ${range(wLoads).map(wLoad).join("\n")}
 
     for (var kk = 0u; kk < TK; kk++) {
 ${reads}
-${lines(8, (i) => `      acc${2 * i} += a${i} * b0;\n      acc${2 * i + 1} += a${i} * b1;`)}
+${lines(8, (i) => `      acc${2 * i} = fma(vec4<f32>(a${i}), b0, acc${2 * i});\n      acc${2 * i + 1} = fma(vec4<f32>(a${i}), b1, acc${2 * i + 1});`)}
     }
     workgroupBarrier();
   }

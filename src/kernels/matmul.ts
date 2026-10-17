@@ -14,8 +14,9 @@ import { fp8Wgsl } from "./fp8";
  * x and W are read 4 values at a time; W is decoded once per tile into workgroup memory,
  * stored k-major so each thread reads 8 neighbours per step.
  *
- * The inner code is generated fully unrolled with named variables: arrays indexed in loops can
- * end up in slow memory instead of registers after WGSL is translated for the GPU driver.
+ * The inner code is generated fully unrolled (also over the 16 k of a step) with named variables:
+ * arrays indexed in loops can end up in slow memory instead of registers after WGSL is translated for
+ * the GPU driver. Multiply-adds use fma() (see step()).
  * Needs K, x/W strides and offsets to be multiples of 4 (true for every Krea 2 layer).
  *
  * Input "conv3x3" turns it into a 3×3 convolution (padding 1) without an im2col copy: x is a
@@ -97,6 +98,21 @@ const load = (t: number, weights: Weights, input: Input) => /* wgsl */ `
 ${loadW[weights]}
   }`;
 
+/**
+ * One k of the inner loop, unrolled (kk is a constant). Explicit fma(): on D3D12 (Windows Chrome/Edge)
+ * "acc += a * b" became a separate multiply and add, which capped the matmul at ~17 TFLOPS on an RTX 4080;
+ * with fma() it reaches ~25 (steady f32 peak ~37.5).
+ */
+const step = (kk: number) => /* wgsl */ `
+    {
+      let xa = ${kk}u * TM + lid.y * 8u;
+      let wa = ${kk}u * TN + lid.x * 8u;
+${lines(8, (i) => `      let a${i} = vec4<f32>(xs[xa + ${i}u]);`)}
+      let b0 = vec4<f32>(ws[wa], ws[wa + 1u], ws[wa + 2u], ws[wa + 3u]);
+      let b1 = vec4<f32>(ws[wa + 4u], ws[wa + 5u], ws[wa + 6u], ws[wa + 7u]);
+${lines(8, (i) => `      acc${2 * i} = fma(a${i}, b0, acc${2 * i});\n      acc${2 * i + 1} = fma(a${i}, b1, acc${2 * i + 1});`)}
+    }`;
+
 export type MatmulMode = { splitK?: boolean; accumulate?: boolean };
 
 export const matmulWgsl = (weights: Weights, input: Input = "rows", { splitK = false, accumulate = false }: MatmulMode = {}) => /* wgsl */ `
@@ -152,14 +168,7 @@ ${load(0, weights, input)}
 ${load(1, weights, input)}
     workgroupBarrier();
 
-    for (var kk = 0u; kk < TK; kk++) {
-      let xa = kk * TM + lid.y * 8u;
-      let wa = kk * TN + lid.x * 8u;
-${lines(8, (i) => `      let a${i} = xs[xa + ${i}u];`)}
-      let b0 = vec4<f32>(ws[wa], ws[wa + 1u], ws[wa + 2u], ws[wa + 3u]);
-      let b1 = vec4<f32>(ws[wa + 4u], ws[wa + 5u], ws[wa + 6u], ws[wa + 7u]);
-${lines(8, (i) => `      acc${2 * i} += a${i} * b0;\n      acc${2 * i + 1} += a${i} * b1;`)}
-    }
+${lines(16, (kk) => step(kk))}
     workgroupBarrier();
   }
 

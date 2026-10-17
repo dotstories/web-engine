@@ -127,3 +127,14 @@ export function loraMatrix(dtype: string, bytes: Uint8Array, rows: number, cols:
   for (let i = 0; i < rows; i++) out.set(values.subarray(i * cols, (i + 1) * cols), i * c);
   return { dtype: "f32" as const, data: out, rows: r, cols: c };
 }
+
+/** W [n, k] += scale · up [n, rank] · down [rank, k], in place (for small f32 weights merged on the CPU). */
+export function mergeLora<T extends Float32Array>(weight: T, n: number, k: number, down: Float32Array, up: Float32Array, rank: number, scale: number): T {
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < k; j++) {
+      let sum = 0;
+      for (let r = 0; r < rank; r++) sum += up[i * rank + r] * down[r * k + j];
+      weight[i * k + j] += scale * sum;
+    }
+  return weight;
+}

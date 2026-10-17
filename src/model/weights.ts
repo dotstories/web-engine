@@ -1,6 +1,6 @@
 import type { Graph } from "../gpu/graph";
 import { toFloat32 } from "../weights/fp8";
-import { loraMatrix, type Lora } from "../weights/lora";
+import { loraMatrix, mergeLora, type Lora } from "../weights/lora";
 import { readTensor, type Safetensors, type TensorInfo } from "../weights/safetensors";
 import type { AttentionMlpWeights, BlockWeights } from "./block";
 import type { Linear } from "./ops";
@@ -55,6 +55,16 @@ export async function loadFloats(file: Blob, st: Safetensors, name: string): Pro
   return toFloat32(t.dtype, await readTensor(file, t));
 }
 
+/** A small f32 weight with the LoRA merged in on the CPU (exact in f32, like ComfyUI's merged W + Δ). */
+export async function loadMergedFloats(file: Blob, st: Safetensors, name: string, lora?: LoraWeights): Promise<Float32Array<ArrayBuffer>> {
+  const weight = await loadFloats(file, st, `${name}.weight`);
+  const target = lora?.strength ? lora.lora.targets.get(name) : undefined;
+  if (!lora || !target) return weight;
+  const [n, k] = tensor(st, `${name}.weight`).shape;
+  const read = async (info: TensorInfo) => toFloat32(info.dtype, await readTensor(lora.file, info));
+  return mergeLora(weight, n, k, await read(target.down), await read(target.up), target.rank, lora.strength * target.scale);
+}
+
 /** Attention + MLP + norms: the same names in single-stream and text fusion blocks. */
 async function loadAttentionMlp(graph: Graph, file: Blob, st: Safetensors, prefix: string, lora?: LoraWeights): Promise<AttentionMlpWeights> {
   const lin = (name: string) => loadLinear(graph, file, st, `${prefix}.${name}`, lora);
@@ -89,7 +99,6 @@ export async function loadTransformer(
   onProgress?: (done: number, total: number) => void,
   lora?: LoraWeights,
 ): Promise<TransformerWeights> {
-  if (lora?.lora.targets.has("txtfusion.projector")) throw new Error("This LoRA changes txtfusion.projector, which is not supported yet");
   const lin = (name: string) => loadLinear(graph, file, st, name, lora);
   const vec = async (name: string) => graph.buffer(await loadFloats(file, st, name));
   const fusion = (kind: string) => Promise.all([0, 1].map((i) => loadAttentionMlp(graph, file, st, `txtfusion.${kind}.${i}`, lora)));
@@ -102,7 +111,7 @@ export async function loadTransformer(
     tmlp2: await lin("tmlp.2"),
     tproj: await lin("tproj.1"),
     layerwise: await fusion("layerwise_blocks"),
-    projector: await vec("txtfusion.projector.weight"),
+    projector: graph.buffer(await loadMergedFloats(file, st, "txtfusion.projector", lora)),
     refiner: await fusion("refiner_blocks"),
     txtNorm: await vec("txtmlp.0.scale"),
     txt1: await lin("txtmlp.1"),

@@ -21,7 +21,7 @@ $("#run").addEventListener("click", async () => {
     for (const kind of ["f32", "f16", "i8"] as const) {
       if (!peakSupported(device, kind)) continue;
       status.textContent = `Timing: ${kind} peak…`;
-      peaks.push({ kind, ...(await timePeak(device, kind, quick ? { workgroups: 4, iters: 16 } : {})) });
+      peaks.push({ kind, ...(await timePeak(device, kind, quick ? { workgroups: 4, iters: 16, warmupMs: 20 } : {})) });
     }
     $("#peaks tbody").replaceChildren(
       ...peaks.map((p) => {

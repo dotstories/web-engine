@@ -61,8 +61,16 @@ export function peakSupported(device: GPUDevice, kind: PeakKind): boolean {
   return true;
 }
 
-/** Average ms per dispatch and the operations per second (TFLOPS, or TOPS for i8). */
-export async function timePeak(device: GPUDevice, kind: PeakKind, { workgroups = 16384, iters = 8192, runs = 5 } = {}) {
+/**
+ * Ms per dispatch and the operations per second (TFLOPS, or TOPS for i8).
+ * GPUs raise their clocks under load, so it first runs for `warmupMs`, then keeps the fastest of `rounds`
+ * rounds (one cold run once gave 18.8 instead of ~30 TFLOPS on an RTX 4080).
+ */
+export async function timePeak(
+  device: GPUDevice,
+  kind: PeakKind,
+  { workgroups = 16384, iters = 8192, runs = 5, rounds = 3, warmupMs = 500 } = {},
+) {
   const module = device.createShaderModule({ code: peakWgsl(kind) });
   const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "main" } });
   const params = peakParams(iters);
@@ -84,10 +92,15 @@ export async function timePeak(device: GPUDevice, kind: PeakKind, { workgroups =
     await device.queue.onSubmittedWorkDone();
   };
   try {
-    await run(1); // warm up
-    const start = performance.now();
-    await run(runs);
-    const ms = (performance.now() - start) / runs;
+    const warm = performance.now();
+    do await run(1);
+    while (performance.now() - warm < warmupMs);
+    let ms = Infinity;
+    for (let r = 0; r < rounds; r++) {
+      const start = performance.now();
+      await run(runs);
+      ms = Math.min(ms, (performance.now() - start) / runs);
+    }
     return { ms, tflops: (workgroups * THREADS * iters * OPS_PER_ITER) / (ms * 1e9) };
   } finally {
     paramsBuffer.destroy();

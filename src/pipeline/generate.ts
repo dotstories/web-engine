@@ -1,6 +1,7 @@
 import { getDevice } from "../gpu/compute";
 import { Graph } from "../gpu/graph";
-import { eulerStep, gaussian, sigmas } from "../model/sampler";
+import { torchRandn } from "../model/noise";
+import { eulerStep, sigmas } from "../model/sampler";
 import { encode, loadTextEncoder } from "../model/text-encoder";
 import { LATENT_CHANNELS, text, transformer } from "../model/transformer";
 import { decode, loadVae, toRgba, vaeInput } from "../model/vae";
@@ -47,7 +48,8 @@ export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req
   });
 
   // 2. Transformer: 8 Turbo steps
-  let latent = gaussian(LATENT_CHANNELS * lh * lw, req.seed);
+  // Same noise as ComfyUI for the same seed (torch.randn on the CPU), laid out [16][H][W] like torch.
+  let latent = torchRandn(LATENT_CHANNELS * lh * lw, req.seed);
   let lora: ReturnType<typeof describeLora> | undefined;
   const stepTimes: number[] = [];
   await timed("model", async () => {

@@ -25,6 +25,21 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
+  # The noise must match real torch (what ComfyUI uses), or the same seed gives another picture.
+  torch-noise:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python tools/reference/noise.py tests/fixtures/torch-randn.json
+
   # PRs may change dependencies: refresh the lockfile and commit it back.
   # Runs no package code (--ignore-scripts): the write token never sits next to untrusted code.
   lockfile:

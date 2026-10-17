@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getDevice, runCompute } from "../../src/gpu/compute";
 import { matmulBf16, matmulF32, matmulFp8, matmulParams, matmulWgsl, matmulWorkgroups } from "../../src/kernels/matmul";
+import { Graph } from "../../src/gpu/graph";
 import { kSplitFor } from "../../src/model/ops";
 import { toFloat32 } from "../../src/weights/fp8";
 import { e4m3 } from "../../src/weights/fp8";
@@ -132,7 +133,7 @@ describe("split-K matmul", () => {
     const packed = new Uint8Array(Math.ceil(w.length / 4) * 4);
     packed.set(w);
     const [partials] = await runCompute(device, {
-      code: matmulWgsl("fp8", "rows", true),
+      code: matmulWgsl("fp8", "rows", { splitK: true }),
       inputs: [matmulParams({ m, n, k }, scale, { kSplit: split }), x, packed],
       outputs: [split * m * n * 4],
       workgroups: [...matmulWorkgroups({ m, n, k }), split],
@@ -151,4 +152,22 @@ describe("split-K matmul", () => {
     expect(kSplitFor(4160, 6144, 6144)).toBe(1); // already fills the GPU
     expect(kSplitFor(5, 12, 16)).toBe(1); // K too short
   });
+});
+
+it("accumulate mode adds to y instead of overwriting it", async () => {
+  const device = await getDevice();
+  const graph = new Graph(device);
+  try {
+    const [m, n, k, scale] = [3, 6, 8, 0.25];
+    const x = Float32Array.from({ length: m * k }, (_, i) => (i % 5) - 2);
+    const w = Float32Array.from({ length: n * k }, (_, i) => ((i * 3) % 7) - 3);
+    const start = Float32Array.from({ length: m * n }, (_, i) => i);
+    const y = graph.buffer(start);
+    graph.run(matmulWgsl("f32", "rows", { accumulate: true }), [graph.buffer(matmulParams({ m, n, k }, scale)), graph.buffer(x), graph.buffer(w), y], matmulWorkgroups({ m, n, k }));
+    const got = new Float32Array(await graph.read(y));
+    const plain = await matmulF32(device, x, w, scale, { m, n, k });
+    expect(Array.from(got)).toEqual(Array.from(plain, (v, i) => v + start[i]));
+  } finally {
+    graph.destroy();
+  }
 });

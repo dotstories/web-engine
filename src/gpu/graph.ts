@@ -5,7 +5,20 @@
  *
  * Memory: every buffer made here is freed by destroy(), or earlier with free() / release().
  * release(mark) frees the temporaries of one step (e.g. one transformer block) once it is queued.
+ * Freed buffers go to a pool by size and are reused by later buffer() calls: creating big GPU
+ * buffers is slow (on Windows it left the GPU idle half the time). A reused buffer is zeroed
+ * on the GPU, or overwritten with the new data, so buffer() behaves the same either way.
  */
+
+/** Sets every u32 of binding 0 to zero (a reused buffer, so it starts like a new one). */
+const zeroWgsl = /* wgsl */ `
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
+  let i = id.x + id.y * groups.x * 256u;
+  if (i < arrayLength(&out)) { out[i] = 0u; }
+}
+`;
 
 /** A whole buffer, or a part of it (offset and size in bytes; offsets must be multiples of 256). */
 export type Binding = GPUBuffer | { buffer: GPUBuffer; offset: number; size: number };
@@ -15,18 +28,26 @@ export class Graph {
   private encoder: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
   private owned: GPUBuffer[] = [];
+  private pool = new Map<number, GPUBuffer[]>();
+  /** Buffers created vs taken from the pool (for tests and tuning). */
+  readonly stats = { created: 0, reused: 0 };
 
   constructor(readonly device: GPUDevice) {}
 
   /** A storage buffer with this data, or zeroed with this many bytes. */
   buffer(data: ArrayBufferView | number): GPUBuffer {
-    const size = typeof data === "number" ? data : data.byteLength;
-    const buffer = this.device.createBuffer({
-      size: Math.max(4, Math.ceil(size / 4) * 4),
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    });
+    const bytes = typeof data === "number" ? data : data.byteLength;
+    const size = Math.max(4, Math.ceil(bytes / 4) * 4);
+    const reused = this.pool.get(size)?.pop(); // data always fills whole words (writeBuffer needs it)
+    const buffer =
+      reused ?? this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    this.stats[reused ? "reused" : "created"]++;
     // Typed arrays here never sit on a SharedArrayBuffer (no cross-origin isolation), so the cast is safe.
     if (typeof data !== "number") this.device.queue.writeBuffer(buffer, 0, data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
+    else if (reused) {
+      const groups = Math.ceil(size / 4 / 256);
+      this.run(zeroWgsl, [buffer], [Math.min(groups, 65535), Math.ceil(groups / 65535)]);
+    }
     this.owned.push(buffer);
     return buffer;
   }
@@ -103,9 +124,9 @@ export class Graph {
 
   /** Queues the work so far and frees every buffer made since `mark`, except `keep`. */
   release(mark: number, keep: GPUBuffer[] = []): void {
-    this.submit(); // the GPU keeps freed buffers alive until the submitted work is done
+    this.submit(); // later writes to these buffers are queued after this work
     const later = this.owned.splice(mark);
-    later.filter((b) => !keep.includes(b)).forEach((b) => b.destroy());
+    later.filter((b) => !keep.includes(b)).forEach((b) => this.recycle(b));
     this.owned.push(...later.filter((b) => keep.includes(b)));
   }
 
@@ -113,13 +134,21 @@ export class Graph {
   free(buffer: GPUBuffer): void {
     this.submit();
     this.owned = this.owned.filter((b) => b !== buffer);
-    buffer.destroy();
+    this.recycle(buffer);
   }
 
-  /** Frees every buffer made by this graph. */
+  private recycle(buffer: GPUBuffer): void {
+    const list = this.pool.get(buffer.size) ?? [];
+    list.push(buffer);
+    this.pool.set(buffer.size, list);
+  }
+
+  /** Frees every buffer made by this graph, pooled ones too. */
   destroy(): void {
     this.submit();
     this.owned.forEach((b) => b.destroy());
+    this.pool.forEach((list) => list.forEach((b) => b.destroy()));
     this.owned = [];
+    this.pool.clear();
   }
 }

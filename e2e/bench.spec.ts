@@ -9,5 +9,7 @@ test("times the matmuls and estimates one image", async ({ page }) => {
   await expect(page.locator("#report pre")).toContainText('"peaks"');
   await expect(page.locator("#report pre")).toContainText('"imageSeconds"');
   await expect(page.locator("#report pre")).toContainText('"build"');
+  await expect(page.locator("#attention tbody tr")).toHaveCount(4);
+  await expect(page.locator("#report pre")).toContainText('"attention"');
   await expect(page.getByText(/^Build \w+$/)).toBeVisible();
 });

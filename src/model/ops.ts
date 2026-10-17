@@ -9,7 +9,7 @@ import {
   siluWgsl,
   swigluWgsl,
 } from "../kernels/elementwise";
-import { matmulBf16Wgsl, matmulF32Wgsl, matmulFp8Wgsl, matmulParams, matmulWgsl, matmulWorkgroups, TILE } from "../kernels/matmul";
+import { matmulBf16Wgsl, matmulF32Wgsl, matmulFp8Wgsl, matmulParams, matmulWgsl, matmulWorkgroups, TILE, type MatmulMode } from "../kernels/matmul";
 import { layerSumWgsl, layerSumWorkgroups } from "../kernels/text";
 import { rmsnormParams, rmsnormWgsl, rmsnormWorkgroups } from "../kernels/rmsnorm";
 import { ropeKernel, ropeWorkgroups, type Pairing } from "../kernels/rope";
@@ -32,7 +32,9 @@ export type Linear = {
 };
 
 const MATMUL = { fp8: matmulFp8Wgsl, bf16: matmulBf16Wgsl, f32: matmulF32Wgsl };
-const SPLIT_K = { fp8: matmulWgsl("fp8", "rows", true), bf16: matmulWgsl("bf16", "rows", true), f32: matmulWgsl("f32", "rows", true) };
+const variants = (mode: MatmulMode) => ({ fp8: matmulWgsl("fp8", "rows", mode), bf16: matmulWgsl("bf16", "rows", mode), f32: matmulWgsl("f32", "rows", mode) });
+const SPLIT_K = variants({ splitK: true });
+const ACCUMULATE = variants({ accumulate: true });
 const BUSY = 256; // workgroups that keep a big GPU busy
 const MIN_SLICE = 256; // K values per slice, at least
 
@@ -55,7 +57,7 @@ function narrowLinear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuff
   return y;
 }
 
-/** y[m, n] = x[m, k] · Wᵀ (+ bias) (+ up.scale · (x · downᵀ) · upᵀ). Same as ComfyUI's merged W + Δ, without touching W. */
+/** y[m, n] = x[m, k] · Wᵀ (+ bias) (+ up.scale · (x · downᵀ) · upᵀ, added in place). Same as ComfyUI's merged W + Δ, without touching W. */
 export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuffer {
   const shape = { m, n: w.n, k: w.k };
   const y = graph.buffer(m * w.n * 4);
@@ -64,7 +66,10 @@ export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuf
   if (!w.lora) return out;
   const { down, up } = w.lora;
   if (down.k !== w.k || up.n !== w.n || up.k !== down.n || down.n % 4) throw new Error("LoRA shapes do not fit the linear layer");
-  return add(graph, out, linear(graph, narrowLinear(graph, x, down, m), up, m), m * w.n);
+  const t = narrowLinear(graph, x, down, m);
+  const upShape = { m, n: up.n, k: up.k };
+  graph.run(ACCUMULATE[up.dtype], [graph.buffer(matmulParams(upShape, up.scale)), t, up.buffer, out], matmulWorkgroups(upShape)); // out += …
+  return out;
 }
 
 export type Mod = { scale: Binding; shift: Binding };

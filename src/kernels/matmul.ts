@@ -25,6 +25,9 @@ import { fp8Wgsl } from "./fp8";
  * splitK: workgroup z sums only its slice of K (kSplit slices) into partial z of y [kSplit, M, yStride].
  * For narrow outputs with a long K (a LoRA's x · downᵀ: N = rank), where 128×128 tiles alone
  * would leave most of the GPU idle. Sum the partials afterwards (layerSum).
+ *
+ * accumulate: y += x · Wᵀ × scale instead of y = …, so a LoRA's update goes straight into the layer's
+ * output (no extra buffer, no add pass).
  */
 export const TILE = 128;
 
@@ -94,7 +97,9 @@ const load = (t: number, weights: Weights, input: Input) => /* wgsl */ `
 ${loadW[weights]}
   }`;
 
-export const matmulWgsl = (weights: Weights, input: Input = "rows", splitK = false) => /* wgsl */ `
+export type MatmulMode = { splitK?: boolean; accumulate?: boolean };
+
+export const matmulWgsl = (weights: Weights, input: Input = "rows", { splitK = false, accumulate = false }: MatmulMode = {}) => /* wgsl */ `
 ${weights === "fp8" ? fp8Wgsl : ""}
 struct Params {
   m: u32, n: u32, k: u32, scale: f32,
@@ -118,10 +123,11 @@ ${splitK ? "var<private> z_rows = 0u; // rows before this workgroup's partial" :
 
 fn store4(r: u32, c: u32, v: vec4<f32>) {
   let o = p.y_offset + ${splitK ? "(z_rows + r)" : "r"} * p.y_stride + c;
-  if (c < p.n) { y[o] = v.x * p.scale; }
-  if (c + 1u < p.n) { y[o + 1u] = v.y * p.scale; }
-  if (c + 2u < p.n) { y[o + 2u] = v.z * p.scale; }
-  if (c + 3u < p.n) { y[o + 3u] = v.w * p.scale; }
+${lines(4, (i) => {
+  const at = i ? `o + ${i}u` : "o";
+  const c = i ? `c + ${i}u` : "c";
+  return `  if (${c} < p.n) { y[${at}] = ${accumulate ? `y[${at}] + ` : ""}v.${"xyzw"[i]} * p.scale; }`;
+})}
 }
 
 @compute @workgroup_size(16, 16)

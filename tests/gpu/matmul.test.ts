@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { getDevice } from "../../src/gpu/compute";
-import { matmulBf16, matmulF32, matmulFp8, matmulParams } from "../../src/kernels/matmul";
+import { getDevice, runCompute } from "../../src/gpu/compute";
+import { matmulBf16, matmulF32, matmulFp8, matmulParams, matmulWgsl, matmulWorkgroups } from "../../src/kernels/matmul";
+import { kSplitFor } from "../../src/model/ops";
 import { toFloat32 } from "../../src/weights/fp8";
 import { e4m3 } from "../../src/weights/fp8";
 
@@ -120,5 +121,34 @@ describe("matmulBf16", () => {
     const cpu = new Float64Array(m * n);
     for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) for (let t = 0; t < k; t++) cpu[i * n + j] += x[i * k + t] * wf[j * k + t] * 0.5;
     expect(relError(gpu, cpu)).toBeLessThan(1e-5);
+  });
+});
+
+describe("split-K matmul", () => {
+  it("each workgroup layer sums its own K slice into its own partial (fp8, uneven slices, scale)", async () => {
+    const device = await getDevice();
+    const [m, n, k, split, scale] = [5, 12, 200, 3, 0.5]; // slices of 80, 80, 40
+    const { x, w } = data(m, n, k, 3);
+    const packed = new Uint8Array(Math.ceil(w.length / 4) * 4);
+    packed.set(w);
+    const [partials] = await runCompute(device, {
+      code: matmulWgsl("fp8", "rows", true),
+      inputs: [matmulParams({ m, n, k }, scale, { kSplit: split }), x, packed],
+      outputs: [split * m * n * 4],
+      workgroups: [...matmulWorkgroups({ m, n, k }), split],
+    });
+    const parts = new Float32Array(partials);
+    const sum = Array.from({ length: m * n }, (_, i) => parts[i] + parts[m * n + i] + parts[2 * m * n + i]);
+    const want = reference(x, w, scale, m, n, k);
+    for (let i = 0; i < want.length; i++) expect(sum[i]).toBeCloseTo(want[i], 3);
+    // the first slice alone is not the whole result
+    expect(Math.abs(parts[0] - want[0])).toBeGreaterThan(1e-3);
+  });
+
+  it("splits only narrow outputs with a long K", () => {
+    expect(kSplitFor(1088, 64, 6144)).toBe(24); // 9 tiles → 29 wanted, capped at 6144 / 256
+    expect(kSplitFor(4160, 64, 16384)).toBe(8); // 33 tiles → 8
+    expect(kSplitFor(4160, 6144, 6144)).toBe(1); // already fills the GPU
+    expect(kSplitFor(5, 12, 16)).toBe(1); // K too short
   });
 });

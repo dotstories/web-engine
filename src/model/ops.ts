@@ -9,7 +9,8 @@ import {
   siluWgsl,
   swigluWgsl,
 } from "../kernels/elementwise";
-import { matmulBf16Wgsl, matmulF32Wgsl, matmulFp8Wgsl, matmulParams, matmulWorkgroups } from "../kernels/matmul";
+import { matmulBf16Wgsl, matmulF32Wgsl, matmulFp8Wgsl, matmulParams, matmulWgsl, matmulWorkgroups, TILE } from "../kernels/matmul";
+import { layerSumWgsl, layerSumWorkgroups } from "../kernels/text";
 import { rmsnormParams, rmsnormWgsl, rmsnormWorkgroups } from "../kernels/rmsnorm";
 import { ropeKernel, ropeWorkgroups, type Pairing } from "../kernels/rope";
 
@@ -31,6 +32,28 @@ export type Linear = {
 };
 
 const MATMUL = { fp8: matmulFp8Wgsl, bf16: matmulBf16Wgsl, f32: matmulF32Wgsl };
+const SPLIT_K = { fp8: matmulWgsl("fp8", "rows", true), bf16: matmulWgsl("bf16", "rows", true), f32: matmulWgsl("f32", "rows", true) };
+const BUSY = 256; // workgroups that keep a big GPU busy
+const MIN_SLICE = 256; // K values per slice, at least
+
+/** How many K slices make x[m, k] · Wᵀ (n narrow) fill the GPU: 1 = no split. */
+export function kSplitFor(m: number, n: number, k: number): number {
+  const tiles = Math.ceil(m / TILE) * Math.ceil(n / TILE);
+  return Math.max(1, Math.min(Math.ceil(BUSY / tiles), Math.floor(k / MIN_SLICE)));
+}
+
+/** y = x · Wᵀ like linear(), split over K when the output is too narrow to fill the GPU (a LoRA's down). */
+function narrowLinear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuffer {
+  const split = kSplitFor(m, w.n, w.k);
+  if (split === 1) return linear(graph, x, w, m);
+  const shape = { m, n: w.n, k: w.k };
+  const partials = graph.buffer(split * m * w.n * 4);
+  graph.run(SPLIT_K[w.dtype], [graph.buffer(matmulParams(shape, w.scale, { kSplit: split })), x, w.buffer, partials], [...matmulWorkgroups(shape), split]);
+  const y = graph.buffer(m * w.n * 4);
+  const params = graph.buffer(new Uint32Array([1, split, m * w.n]));
+  graph.run(layerSumWgsl, [params, partials, graph.buffer(new Float32Array(split).fill(1)), y], layerSumWorkgroups(1, m * w.n));
+  return y;
+}
 
 /** y[m, n] = x[m, k] · Wᵀ (+ bias) (+ up.scale · (x · downᵀ) · upᵀ). Same as ComfyUI's merged W + Δ, without touching W. */
 export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuffer {
@@ -41,7 +64,7 @@ export function linear(graph: Graph, x: GPUBuffer, w: Linear, m: number): GPUBuf
   if (!w.lora) return out;
   const { down, up } = w.lora;
   if (down.k !== w.k || up.n !== w.n || up.k !== down.n || down.n % 4) throw new Error("LoRA shapes do not fit the linear layer");
-  return add(graph, out, linear(graph, linear(graph, x, down, m), up, m), m * w.n);
+  return add(graph, out, linear(graph, narrowLinear(graph, x, down, m), up, m), m * w.n);
 }
 
 export type Mod = { scale: Binding; shift: Binding };

@@ -22,7 +22,7 @@
     "@vitest/browser": "^3",
     "@webgpu/types": "^0.1",
     "eslint": "^9",
-    "globals": "^16",
+    "globals": "^17",
     "playwright": "^1.63.0",
     "typescript": "^5",
     "typescript-eslint": "^8",

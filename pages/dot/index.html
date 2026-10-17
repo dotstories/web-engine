@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Weeping Gate · DotStories Web Engine</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 64rem; margin: 2rem auto; padding: 0 1rem; }
+      label { display: block; margin: 0.6rem 0; }
+      fieldset { border: 1px solid #ccc; padding: 0.5rem 1rem; margin: 1rem 0; }
+      button, input { font: inherit; padding: 0.3rem 0.6rem; }
+      progress { width: 100%; }
+      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      figure { margin: 0; }
+      canvas, img { width: 100%; height: auto; border: 1px solid #ccc; display: block; }
+      details pre { white-space: pre-wrap; font-size: 0.85rem; }
+      small { color: #555; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>The Weeping Gate</h1>
+      <p>Makes the Dark Fantasy Kit image on your GPU and checks it against the picture ComfyUI made with the same
+        settings. Nothing is uploaded. Needs Chrome or Edge on a desktop and about 16 GB of GPU memory.</p>
+      <p id="recipe"></p>
+      <details><summary>Prompt (as ComfyUI's text encoder got it)</summary><pre id="prompt">Loading…</pre></details>
+
+      <fieldset>
+        <legend>Model files</legend>
+        <button id="pick" type="button">Choose your ComfyUI models folder</button>
+        <p id="files" role="status"></p>
+        <label><input id="license" type="checkbox" /> I have read and accept the
+          <a href="https://huggingface.co/Comfy-Org/Krea-2" target="_blank" rel="noopener">Krea 2 Community License</a>
+          and will use the model and its images only as it allows.</label>
+      </fieldset>
+
+      <p><button id="make" type="button">Make The Weeping Gate</button>
+        <button id="cancel" type="button" hidden>Cancel</button></p>
+      <p id="status" role="status"></p>
+      <progress id="progress" max="1" value="0" hidden></progress>
+      <p id="score" role="status"></p>
+
+      <div class="pair">
+        <figure><canvas id="image" hidden></canvas><figcaption id="mine"></figcaption></figure>
+        <figure><img id="reference" alt="The Weeping Gate made by ComfyUI" /><figcaption>ComfyUI (reference)</figcaption></figure>
+      </div>
+      <p><a id="download" hidden download="weeping-gate-browser.png">Download PNG</a> <small id="times"></small></p>
+      <p><small id="build"></small></p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,2 @@
+# Dot files are compared byte for byte: never change their line endings.
+public/dots/** -text

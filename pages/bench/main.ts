@@ -1,5 +1,6 @@
 import { KREA2_ATTENTION, timeAttention } from "../../src/bench/attention";
 import { KIT_SIZE, profileBlock } from "../../src/bench/block";
+import { TUNE_SHAPES, tuneMatmul } from "../../src/bench/tune";
 import { BLOCK_MATMULS, estimateImage, tokensFor } from "../../src/bench/estimate";
 import { timeMatmul } from "../../src/bench/matmul";
 import { peakSupported, timePeak, type PeakKind } from "../../src/bench/peak";
@@ -78,10 +79,22 @@ $("#run").addEventListener("click", async () => {
       }),
     );
     $("#block").hidden = false;
+    status.textContent = "Timing: 8 matmul layouts at 1928×1088…";
+    const tune = await tuneMatmul(device, quick ? [{ name: "tiny", m: 64, n: 128, k: 64 }] : TUNE_SHAPES, quick ? 1 : 3);
+    $("#tune tbody").replaceChildren(
+      ...tune.map((t) => {
+        const row = document.createElement("tr");
+        row.insertCell().textContent = t.variant;
+        if (t.skipped) row.insertCell().textContent = `skipped: ${t.skipped}`;
+        for (const v of t.tflops) row.insertCell().textContent = `${v.toFixed(1)} TFLOPS`;
+        return row;
+      }),
+    );
+    $("#tune").hidden = false;
     const f32Peak = peaks.find((p) => p.kind === "f32")?.tflops ?? 0;
     const share = f32Peak ? ` The matmul reaches ${Math.round((100 * estimate.tflops) / f32Peak)}% of the f32 peak.` : "";
     status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).${share}`;
-    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, attention, block, userAgent: navigator.userAgent }, null, 2);
+    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, attention, block, tune, userAgent: navigator.userAgent }, null, 2);
     $("#report").hidden = false;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;

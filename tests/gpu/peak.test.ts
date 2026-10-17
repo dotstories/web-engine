@@ -31,7 +31,7 @@ describe("peak kernels", () => {
 
   it("times the f32 peak", async () => {
     const device = await getDevice();
-    const { ms, tflops } = await timePeak(device, "f32", { workgroups: 4, iters: 16 });
+    const { ms, tflops } = await timePeak(device, "f32", { workgroups: 4, iters: 16, warmupMs: 20 });
     expect(ms).toBeGreaterThan(0);
     expect(Number.isFinite(tflops)).toBe(true);
   });

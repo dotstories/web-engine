@@ -1,5 +1,6 @@
 import { BLOCK_MATMULS, estimateImage, tokensFor } from "../../src/bench/estimate";
 import { timeMatmul } from "../../src/bench/matmul";
+import { peakSupported, timePeak, type PeakKind } from "../../src/bench/peak";
 import { getDevice } from "../../src/gpu/compute";
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -15,6 +16,20 @@ $("#run").addEventListener("click", async () => {
   run.disabled = true;
   try {
     const device = await getDevice();
+    const peaks: { kind: PeakKind; ms: number; tflops: number }[] = [];
+    for (const kind of ["f32", "f16", "i8"] as const) {
+      if (!peakSupported(device, kind)) continue;
+      status.textContent = `Timing: ${kind} peak…`;
+      peaks.push({ kind, ...(await timePeak(device, kind, quick ? { workgroups: 4, iters: 16 } : {})) });
+    }
+    $("#peaks tbody").replaceChildren(
+      ...peaks.map((p) => {
+        const row = document.createElement("tr");
+        for (const text of [p.kind, p.ms.toFixed(2), p.tflops.toFixed(1)]) row.insertCell().textContent = text;
+        return row;
+      }),
+    );
+    $("#peaks").hidden = false;
     const timings = [];
     for (const s of shapes) {
       status.textContent = `Timing: ${s.name}…`;
@@ -33,8 +48,10 @@ $("#run").addEventListener("click", async () => {
       }),
     );
     $("#results").hidden = false;
-    status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).`;
-    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, timings, estimate, userAgent: navigator.userAgent }, null, 2);
+    const f32Peak = peaks.find((p) => p.kind === "f32")?.tflops ?? 0;
+    const share = f32Peak ? ` The matmul reaches ${Math.round((100 * estimate.tflops) / f32Peak)}% of the f32 peak.` : "";
+    status.textContent = `Done: ${estimate.tflops.toFixed(1)} TFLOPS → about ${Math.round(estimate.imageSeconds)} s per 1024×1024 image (8 steps).${share}`;
+    $("#report pre").textContent = JSON.stringify({ build: __BUILD__, tokens, peaks, timings, estimate, userAgent: navigator.userAgent }, null, 2);
     $("#report").hidden = false;
   } catch (e) {
     status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;

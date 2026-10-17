@@ -16,9 +16,14 @@
     <main>
       <h1>How fast would Krea 2 run here?</h1>
       <p>Times the fp8 matrix multiply (the core of the model) at Krea 2 sizes for a 1024×1024 image, then estimates one image.
+        It also measures the GPU's peak math speed (f32, f16, int8) to show how much headroom is left.
         Uses about 1 GB of GPU memory and takes under a minute.</p>
       <button id="run" type="button">Run benchmark</button>
       <p id="status" role="status"></p>
+      <table id="peaks" hidden>
+        <thead><tr><th>GPU peak (no memory)</th><th>ms</th><th>TFLOPS / TOPS</th></tr></thead>
+        <tbody></tbody>
+      </table>
       <table id="results" hidden>
         <thead><tr><th>Matmul</th><th>Shape</th><th>ms</th><th>TFLOPS</th></tr></thead>
         <tbody></tbody>

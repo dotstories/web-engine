@@ -29,8 +29,8 @@ export class Graph {
   private pass: GPUComputePassEncoder | null = null;
   private owned: GPUBuffer[] = [];
   private pool = new Map<number, GPUBuffer[]>();
-  /** Buffers created vs taken from the pool (for tests and tuning). */
-  readonly stats = { created: 0, reused: 0 };
+  /** Buffers created vs taken from the pool, and GPU bytes created (for tests and tuning). */
+  readonly stats = { created: 0, reused: 0, createdBytes: 0 };
 
   constructor(readonly device: GPUDevice) {}
 
@@ -42,6 +42,7 @@ export class Graph {
     const buffer =
       reused ?? this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.stats[reused ? "reused" : "created"]++;
+    if (!reused) this.stats.createdBytes += size;
     // Typed arrays here never sit on a SharedArrayBuffer (no cross-origin isolation), so the cast is safe.
     if (typeof data !== "number") this.device.queue.writeBuffer(buffer, 0, data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
     else if (reused) {

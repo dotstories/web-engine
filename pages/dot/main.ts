@@ -6,7 +6,10 @@ import { WEEPING_GATE as DOT } from "./recipe";
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const url = (path: string) => new URL(path, location.href);
-const picker = (window as unknown as { showDirectoryPicker?: (options?: object) => Promise<Folder> }).showDirectoryPicker;
+const nativePicker = (window as unknown as { showDirectoryPicker?: (options?: object) => Promise<Folder> }).showDirectoryPicker;
+/** `?models=browser` (for testing): read a copy of the models from this site's private browser storage, no folder prompt. */
+const browserModels = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("models") as Promise<unknown> as Promise<Folder>;
+const picker = new URLSearchParams(location.search).get("models") === "browser" ? browserModels : nativePicker && ((options?: object) => nativePicker(options));
 
 let files: ModelFiles | null = null;
 $("#build").textContent = `Build ${__BUILD__}`;

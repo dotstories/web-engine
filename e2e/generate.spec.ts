@@ -12,3 +12,10 @@ test("offers the LoRA with the Dark Fantasy Kit strength", async ({ page }) => {
   await expect(page.getByLabel("LoRA")).toHaveValue("");
   await expect(page.getByLabel("Strength")).toHaveValue("0.8");
 });
+
+test("offers the Dark Fantasy Kit size (16:9, 2 MP)", async ({ page }) => {
+  await page.goto("/pages/generate/");
+  const size = page.getByLabel("Size");
+  await expect(size).toHaveValue("1024x1024");
+  await expect(size.locator("option")).toContainText(["512 × 512", "1024 × 1024", "1368 × 768", "1928 × 1088 (16:9, 2 MP, Dark Fantasy Kit)"]);
+});

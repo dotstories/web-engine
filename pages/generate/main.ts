@@ -1,5 +1,6 @@
 import { findModelFiles, type Folder, type ModelFiles } from "../../src/pipeline/files";
 import { generate } from "../../src/pipeline/generate";
+import { IMAGE_SIZES, parseSize, sizeValue } from "../../src/pipeline/sizes";
 import { Qwen2Tokenizer } from "../../src/text/tokenizer";
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -8,6 +9,10 @@ const picker = (window as unknown as { showDirectoryPicker?: (options?: object) 
 
 let files: ModelFiles | null = null;
 $("#build").textContent = `Build ${__BUILD__}`;
+for (const s of IMAGE_SIZES) {
+  const value = sizeValue(s);
+  $<HTMLSelectElement>("#size").add(new Option(`${s.width} × ${s.height} (${s.note})`, value, false, value === "1024x1024"));
+}
 
 $("#pick").addEventListener("click", async () => {
   const status = $("#files");
@@ -46,12 +51,12 @@ $("#generate").addEventListener("click", async () => {
     status.textContent = "Please accept the Krea 2 Community License first.";
     return;
   }
-  const size = Number($<HTMLSelectElement>("#size").value);
+  const { width, height } = parseSize($<HTMLSelectElement>("#size").value);
   const strength = $<HTMLSelectElement>("#lora").value ? Number($<HTMLInputElement>("#strength").value) : 0;
   const request = {
     prompt: $<HTMLTextAreaElement>("#prompt").value.trim(),
-    width: size,
-    height: size,
+    width,
+    height,
     seed: Number($<HTMLInputElement>("#seed").value) >>> 0,
     loraStrength: Number.isFinite(strength) ? strength : 0,
   };

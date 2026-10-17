@@ -20,6 +20,7 @@ export type Progress = { stage: "text" | "steps" | "decode"; message: string; fr
  * at a time: text encoder (3.5 GB) → free → transformer (13 GB, 8 steps) → free → image decoder.
  */
 export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req: Request, onProgress: (p: Progress) => void) {
+  if (req.width % 8 || req.height % 8) throw new Error("Width and height must be a multiple of 8");
   const device = await getDevice();
   const [lh, lw] = [req.height / 8, req.width / 8];
   const times: Record<string, number> = {};

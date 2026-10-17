@@ -36,4 +36,52 @@ describe("Graph", () => {
     graph.free(before);
     graph.destroy();
   });
+
+  it("reuses released buffers of the same size instead of creating new ones", async () => {
+    const graph = new Graph(await getDevice());
+    const mark = graph.mark();
+    const first = graph.buffer(4096);
+    graph.release(mark);
+    const again = graph.buffer(4096);
+    expect(again).toBe(first);
+    expect(graph.stats).toEqual({ created: 1, reused: 1 });
+    expect(graph.buffer(8192)).not.toBe(first); // other sizes get their own buffer
+    graph.destroy();
+  });
+
+  it("zeroes a reused buffer, and fills a reused buffer with the new data", async () => {
+    const graph = new Graph(await getDevice());
+    let mark = graph.mark();
+    graph.buffer(Float32Array.from({ length: 1000 }, (_, i) => i + 1));
+    graph.release(mark);
+    const zeroed = graph.buffer(4000);
+    expect(new Float32Array(await graph.read(zeroed)).every((v) => v === 0)).toBe(true);
+
+    mark = graph.mark();
+    graph.buffer(Float32Array.from([1, 2, 3, 4]));
+    graph.release(mark);
+    const filled = graph.buffer(Float32Array.from([5, 6, 7, 8]));
+    expect(Array.from(new Float32Array(await graph.read(filled)))).toEqual([5, 6, 7, 8]);
+    expect(graph.stats.reused).toBe(2);
+    graph.destroy();
+  });
+
+  it("does not reuse a buffer for data that leaves part of its last word unwritten", async () => {
+    const graph = new Graph(await getDevice());
+    const mark = graph.mark();
+    graph.buffer(Uint8Array.from([9, 9, 9, 9, 9, 9, 9, 9]));
+    graph.release(mark);
+    const odd = graph.buffer(Uint8Array.from([1, 2, 3, 4, 5]));
+    expect(Array.from(new Uint8Array(await graph.read(odd)))).toEqual([1, 2, 3, 4, 5, 0, 0, 0]);
+    expect(graph.stats).toEqual({ created: 2, reused: 0 });
+    graph.destroy();
+  });
+
+  it("free() also returns the buffer to the pool", async () => {
+    const graph = new Graph(await getDevice());
+    const a = graph.buffer(256);
+    graph.free(a);
+    expect(graph.buffer(256)).toBe(a);
+    graph.destroy();
+  });
 });

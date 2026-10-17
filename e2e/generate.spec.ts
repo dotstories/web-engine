@@ -19,3 +19,10 @@ test("offers the Dark Fantasy Kit size (16:9, 2 MP)", async ({ page }) => {
   await expect(size).toHaveValue("1024x1024");
   await expect(size.locator("option")).toContainText(["512 × 512", "1024 × 1024", "1368 × 768", "1928 × 1088 (16:9, 2 MP, Dark Fantasy Kit)"]);
 });
+
+test("shows Cancel only while an image is being made", async ({ page }) => {
+  await page.goto("/pages/generate/");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeHidden();
+  await page.getByRole("button", { name: "Generate", exact: true }).click(); // no folder yet: stops right away
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeHidden();
+});

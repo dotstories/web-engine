@@ -65,8 +65,15 @@ $("#generate").addEventListener("click", async () => {
     return;
   }
   const button = $<HTMLButtonElement>("#generate");
+  const cancel = $<HTMLButtonElement>("#cancel");
   const progress = $<HTMLProgressElement>("#progress");
+  const controller = new AbortController();
+  cancel.onclick = () => {
+    controller.abort();
+    status.textContent = "Cancelling…";
+  };
   button.disabled = true;
+  cancel.hidden = false;
   progress.hidden = false;
   const start = performance.now();
   try {
@@ -74,7 +81,7 @@ $("#generate").addEventListener("click", async () => {
     const { rgba, width, height, times, stepTimes, lora } = await generate(files, tokenizer, request, (p) => {
       status.textContent = p.message;
       progress.value = p.fraction;
-    });
+    }, { signal: controller.signal });
     const canvas = $<HTMLCanvasElement>("#image");
     [canvas.width, canvas.height] = [width, height];
     canvas.getContext("2d")!.putImageData(new ImageData(rgba, width, height), 0, 0);
@@ -93,9 +100,10 @@ $("#generate").addEventListener("click", async () => {
     $("#times").textContent =
       `text ${times.text} s · load ${times.load} s · 8 steps ${times.steps} s (${stepTimes.join(", ")}) · decode ${times.decode} s${loraText} · build ${__BUILD__}`;
   } catch (e) {
-    status.textContent = `❌ ${e instanceof Error ? e.message : String(e)}`;
+    status.textContent = controller.signal.aborted ? "Cancelled." : `❌ ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     button.disabled = false;
+    cancel.hidden = true;
     progress.hidden = true;
   }
 });

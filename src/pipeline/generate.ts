@@ -15,13 +15,34 @@ import type { ModelFiles } from "./files";
 /** loraStrength: ComfyUI's strength_model for files.lora (0 or no file = no LoRA). */
 export type Request = { prompt: string; width: number; height: number; seed: number; loraStrength?: number };
 export type Progress = { stage: "text" | "steps" | "decode"; message: string; fraction: number };
+export type Options = { signal?: AbortSignal };
+
+/**
+ * Progress that also stops the run: once the signal is aborted, the next progress report throws its reason
+ * (an AbortError). Reports come for every weight file part loaded and every transformer block, so a cancel
+ * lands within about one block; the stages' finally blocks then free the GPU memory.
+ */
+export function abortable(onProgress: (p: Progress) => void, signal?: AbortSignal): (p: Progress) => void {
+  return (p) => {
+    signal?.throwIfAborted();
+    onProgress(p);
+  };
+}
 
 /**
  * Prompt → image with Krea 2 Turbo, all on this computer's GPU. Fits a 16 GB card by running one model
  * at a time: text encoder (3.5 GB) → free → transformer (13 GB, 8 steps) → free → image decoder.
  */
-export async function generate(files: ModelFiles, tokenizer: Qwen2Tokenizer, req: Request, onProgress: (p: Progress) => void) {
+export async function generate(
+  files: ModelFiles,
+  tokenizer: Qwen2Tokenizer,
+  req: Request,
+  report: (p: Progress) => void,
+  { signal }: Options = {},
+) {
+  signal?.throwIfAborted();
   if (req.width % 8 || req.height % 8) throw new Error("Width and height must be a multiple of 8");
+  const onProgress = abortable(report, signal);
   const device = await getDevice();
   const [lh, lw] = [req.height / 8, req.width / 8];
   const times: Record<string, number> = {};

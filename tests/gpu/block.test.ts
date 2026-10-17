@@ -135,37 +135,41 @@ it("runs a whole block on the GPU like the float64 reference", async () => {
   }
 });
 
-it("frees its temporaries as it goes: far less GPU memory than all of them at once", async () => {
+it("frees its temporaries as it goes: far less GPU memory than keeping them all", async () => {
   const device = await getDevice();
-  const graph = new Graph(device);
-  const tokens = 48;
-  const w: BlockWeights = {
-    wq: lin(cfg.heads * cfg.headDim, cfg.hidden),
-    wk: lin(cfg.kvHeads * cfg.headDim, cfg.hidden),
-    wv: lin(cfg.kvHeads * cfg.headDim, cfg.hidden),
-    gate: lin(cfg.hidden, cfg.hidden),
-    wo: lin(cfg.hidden, cfg.heads * cfg.headDim),
-    mlpGate: lin(cfg.mlp, cfg.hidden),
-    mlpUp: lin(cfg.mlp, cfg.hidden),
-    mlpDown: lin(cfg.hidden, cfg.mlp),
-    norm1: graph.buffer(cfg.hidden * 4),
-    norm2: graph.buffer(cfg.hidden * 4),
-    normQ: graph.buffer(cfg.headDim * 4),
-    normK: graph.buffer(cfg.headDim * 4),
-    table: graph.buffer(6 * cfg.hidden * 4),
+  /** Bytes one block creates on a fresh graph. */
+  const blockBytes = (graph: Graph) => {
+    const tokens = 48;
+    const lin = (n: number, k: number): Linear => ({ buffer: graph.buffer(n * k), dtype: "fp8", scale: 1, n, k });
+    const w: BlockWeights = {
+      wq: lin(cfg.heads * cfg.headDim, cfg.hidden),
+      wk: lin(cfg.kvHeads * cfg.headDim, cfg.hidden),
+      wv: lin(cfg.kvHeads * cfg.headDim, cfg.hidden),
+      gate: lin(cfg.hidden, cfg.hidden),
+      wo: lin(cfg.hidden, cfg.heads * cfg.headDim),
+      mlpGate: lin(cfg.mlp, cfg.hidden),
+      mlpUp: lin(cfg.mlp, cfg.hidden),
+      mlpDown: lin(cfg.hidden, cfg.mlp),
+      norm1: graph.buffer(cfg.hidden * 4),
+      norm2: graph.buffer(cfg.hidden * 4),
+      normQ: graph.buffer(cfg.headDim * 4),
+      normK: graph.buffer(cfg.headDim * 4),
+      table: graph.buffer(6 * cfg.hidden * 4),
+    };
+    const tables = ropeTables(positions(0, 6, 8), axes);
+    const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
+    const x = graph.buffer(tokens * cfg.hidden * 4);
+    const tvec = graph.buffer(6 * cfg.hidden * 4);
+    const before = graph.stats.createdBytes;
+    block(graph, w, cfg, x, tvec, rope);
+    const bytes = graph.stats.createdBytes - before;
+    graph.destroy();
+    return bytes;
   };
-  function lin(n: number, k: number): Linear {
-    return { buffer: graph.buffer(n * k), dtype: "fp8", scale: 1, n, k };
+  class KeepAll extends Graph {
+    override free(): void {} // every temporary stays until the end, like before
   }
-  const tables = ropeTables(positions(0, 6, 8), axes);
-  const rope = { cos: graph.buffer(tables.cos), sin: graph.buffer(tables.sin), pairs: tables.pairs, tokens };
-  const x = graph.buffer(tokens * cfg.hidden * 4);
-  const tvec = graph.buffer(6 * cfg.hidden * 4);
-  const before = graph.stats.createdBytes;
-  block(graph, w, cfg, x, tvec, rope);
-  const used = graph.stats.createdBytes - before;
-  // Without frees a block keeps ~13 [tokens, hidden] + 3 [tokens, mlp] + 2 [tokens, tokens] buffers at once.
-  const all = 4 * tokens * (13 * cfg.hidden + 3 * cfg.mlp + 2 * tokens);
-  expect(used).toBeLessThan(0.6 * all);
-  graph.destroy();
+  const freed = blockBytes(new Graph(device));
+  const kept = blockBytes(new KeepAll(device));
+  expect(freed).toBeLessThan(0.6 * kept);
 });

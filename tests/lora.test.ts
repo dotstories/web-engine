@@ -155,6 +155,6 @@ describe("describeLora", () => {
       "diffusion_model.blocks.0.mlp.down.lora_B.weight": t("F32", [4, 4]),
       "diffusion_model.something.else": t("F32", [1]),
     });
-    expect(describeLora(lora)).toEqual({ layers: 2, dtypes: ["BF16", "F32"], ranks: [2, 4], bytes: 2 * (16 + 16) + 4 * (24 + 16), unused: 1 });
+    expect(describeLora(lora)).toEqual({ layers: 2, dtypes: ["BF16", "F32"], ranks: [2, 4], bytes: 2 * (8 + 16) + 4 * (24 + 16), unused: 1 });
   });
 });

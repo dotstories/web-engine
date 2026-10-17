@@ -46,5 +46,6 @@ export function attention(graph: Graph, q: GPUBuffer, k: GPUBuffer, v: GPUBuffer
       graph.run(matmulF32Wgsl, [graph.buffer(matmulParams(pv, 1, pvLayout)), probs, vt, out], matmulWorkgroups(pv));
     }
   }
+  [vt, scores, probs].forEach((b) => graph.free(b)); // at 2 MP: 0.66 GB, reused by the next temporaries
   return out;
 }

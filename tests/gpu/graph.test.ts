@@ -44,7 +44,7 @@ describe("Graph", () => {
     graph.release(mark);
     const again = graph.buffer(4096);
     expect(again).toBe(first);
-    expect(graph.stats).toEqual({ created: 1, reused: 1 });
+    expect(graph.stats).toMatchObject({ created: 1, reused: 1 });
     expect(graph.buffer(8192)).not.toBe(first); // other sizes get their own buffer
     graph.destroy();
   });

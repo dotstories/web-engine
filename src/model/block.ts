@@ -48,15 +48,37 @@ function attend(
 ): GPUBuffer {
   const { hidden, heads, kvHeads, headDim, eps } = cfg;
   const none = noMod(graph, headDim); // q/k norm has no modulation
-  let q = norm(graph, linear(graph, h, w.wq, rows), w.normQ, rows * heads, headDim, none, eps);
-  let k = norm(graph, linear(graph, h, w.wk, rows), w.normK, rows * kvHeads, headDim, none, eps);
-  if (rope) [q, k] = [rotate(graph, q, heads, rope), rotate(graph, k, kvHeads, rope)];
-  const o = attn(q, k, linear(graph, h, w.wv, rows));
-  return linear(graph, sigmoidGate(graph, o, linear(graph, h, w.gate, rows), rows * hidden), w.wo, rows);
+  // Each temporary is freed right after its last use, so the next one reuses its memory: at 2 MP a block's
+  // temporaries would otherwise hold ~5.4 GB next to 13 GB of weights, past what fits on a 16 GB GPU.
+  const projected = (w: Linear, n: number, normW: GPUBuffer) => used(graph, linear(graph, h, w, rows), (y) => norm(graph, y, normW, rows * n, headDim, none, eps));
+  let q = projected(w.wq, heads, w.normQ);
+  let k = projected(w.wk, kvHeads, w.normK);
+  if (rope) [q, k] = [used(graph, q, (y) => rotate(graph, y, heads, rope)), used(graph, k, (y) => rotate(graph, y, kvHeads, rope))];
+  const v = linear(graph, h, w.wv, rows);
+  const o = attn(q, k, v);
+  [q, k, v].forEach((b) => graph.free(b));
+  const g = linear(graph, h, w.gate, rows);
+  const og = sigmoidGate(graph, o, g, rows * hidden);
+  graph.free(o);
+  graph.free(g);
+  return used(graph, og, (y) => linear(graph, y, w.wo, rows));
 }
 
-const mlp = (graph: Graph, w: AttentionMlpWeights, cfg: BlockConfig, h: GPUBuffer, rows: number) =>
-  linear(graph, swiglu(graph, linear(graph, h, w.mlpGate, rows), linear(graph, h, w.mlpUp, rows), rows * cfg.mlp), w.mlpDown, rows);
+/** f(x), then x is freed (its last use is queued). */
+function used(graph: Graph, x: GPUBuffer, f: (x: GPUBuffer) => GPUBuffer): GPUBuffer {
+  const y = f(x);
+  graph.free(x);
+  return y;
+}
+
+function mlp(graph: Graph, w: AttentionMlpWeights, cfg: BlockConfig, h: GPUBuffer, rows: number): GPUBuffer {
+  const gate = linear(graph, h, w.mlpGate, rows);
+  const up = linear(graph, h, w.mlpUp, rows);
+  const s = swiglu(graph, gate, up, rows * cfg.mlp);
+  graph.free(gate);
+  graph.free(up);
+  return used(graph, s, (y) => linear(graph, y, w.mlpDown, rows));
+}
 
 /**
  * One Krea 2 single-stream block (ComfyUI SingleStreamBlock / diffusers Krea2TransformerBlock):
@@ -73,9 +95,13 @@ export function block(graph: Graph, w: BlockWeights, cfg: BlockConfig, x: GPUBuf
   const full = (q: GPUBuffer, k: GPUBuffer, v: GPUBuffer) => attention(graph, q, k, v, { tokens: t, heads, kvHeads, dim: headDim });
 
   const h = norm(graph, x, w.norm1, t, hidden, { scale: mod.prescale, shift: mod.preshift }, eps);
-  const x1 = gatedAdd(graph, x, attend(graph, w, cfg, h, t, full, rope), mod.pregate, t * hidden, hidden);
+  const a = used(graph, h, (y) => attend(graph, w, cfg, y, t, full, rope));
+  const x1 = used(graph, a, (y) => gatedAdd(graph, x, y, mod.pregate, t * hidden, hidden));
   const h2 = norm(graph, x1, w.norm2, t, hidden, { scale: mod.postscale, shift: mod.postshift }, eps);
-  return gatedAdd(graph, x1, mlp(graph, w, cfg, h2, t), mod.postgate, t * hidden, hidden);
+  const m = used(graph, h2, (y) => mlp(graph, w, cfg, y, t));
+  const out = gatedAdd(graph, x1, m, mod.postgate, t * hidden, hidden);
+  [m, x1].forEach((b) => graph.free(b));
+  return out;
 }
 
 /**
@@ -93,6 +119,10 @@ export function fusionBlock(
 ): GPUBuffer {
   const { hidden, eps } = cfg;
   const none = noMod(graph, hidden);
-  const x1 = add(graph, x, attend(graph, w, cfg, norm(graph, x, w.norm1, rows, hidden, none, eps), rows, attn), rows * hidden);
-  return add(graph, x1, mlp(graph, w, cfg, norm(graph, x1, w.norm2, rows, hidden, none, eps), rows), rows * hidden);
+  const a = used(graph, norm(graph, x, w.norm1, rows, hidden, none, eps), (h) => attend(graph, w, cfg, h, rows, attn));
+  const x1 = used(graph, a, (y) => add(graph, x, y, rows * hidden));
+  const m = used(graph, norm(graph, x1, w.norm2, rows, hidden, none, eps), (h) => mlp(graph, w, cfg, h, rows));
+  const out = add(graph, x1, m, rows * hidden);
+  [m, x1].forEach((b) => graph.free(b));
+  return out;
 }
